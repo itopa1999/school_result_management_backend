@@ -1,12 +1,14 @@
 from rest_framework import serializers
 
-from administrator.models import AcademicSession, ClassLevel, Result, Student, Term, TermTotalMark
+from administrator.models import AcademicSession, ClassLevel, GradingSystem, Result, SchoolProfile, Student, Subject, Subscription, Term, TermTotalMark
+from authentication.models import User
 
 
 class DashboardSerializer(serializers.Serializer):
     current_session = serializers.CharField()
     current_term = serializers.CharField()
-    active_classes = serializers.IntegerField()    
+    active_classes = serializers.IntegerField()  
+    total_subjects = serializers.IntegerField()    
     school_info = serializers.DictField()
 
 
@@ -60,8 +62,51 @@ class TermTotalMarkSerializer(serializers.ModelSerializer):
             'grade', 'remarks'
         ]
         
+
+class SubjectsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Subject
+        fields = ['id', 'name']
         
+        
+class GradeSystemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GradingSystem
+        fields = ['id', 'min_score','max_score','grade','remark']
+                  
+                  
 class MainInfoSerializer(serializers.Serializer):     
     current_session_id = serializers.IntegerField()
     current_term_id = serializers.IntegerField()
     school_name = serializers.CharField()
+    
+    
+class SchoolProfileSerializer(serializers.Serializer):
+    class Meta:
+        model = SchoolProfile
+        fields = ['id', 'school_name','school_address']
+        
+        
+class UserSerializer(serializers.ModelSerializer):
+    profile_picture = serializers.SerializerMethodField()
+    class Meta:
+        model = User
+        fields = ['id','email', 'is_active', 'profile_picture']
+        
+    def get_profile_picture(self, obj):
+        request = self.context.get('request')
+        if obj.profile_picture and hasattr(obj.profile_picture, 'url'):
+            return request.build_absolute_uri(obj.profile_picture.url)
+        return None
+    
+    
+class CreateUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['email']
+        
+        
+class SubscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Subscription
+        fields = ['id', 'session', 'status', 'paid_on', 'expires_on']

@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404, render
 
 # Create your views here.
@@ -10,8 +10,9 @@ from rest_framework.response import Response
 from rest_framework import status, generics
 from django.db import transaction
 from rest_framework.parsers import MultiPartParser, FormParser
-from administrator.serializers import AcademicSessionSerializer, ClassLevelSerializer, DashboardSerializer, MainInfoSerializer, ResultSerializer, StudentSerializer, TermTotalMarkSerializer
-from .models import AcademicSession, ClassLevel, Result, Student, Term, SchoolProfile, TermTotalMark
+from administrator.serializers import AcademicSessionSerializer, ClassLevelSerializer, CreateUserSerializer, DashboardSerializer, GradeSystemSerializer, MainInfoSerializer, ResultSerializer, SchoolProfileSerializer, StudentSerializer, SubjectsSerializer, SubscriptionSerializer, TermTotalMarkSerializer, UserSerializer
+from authentication.models import User
+from .models import AcademicSession, ClassLevel, GradingSystem, Result, Student, Subject, Subscription, Term, SchoolProfile, TermTotalMark
 from rest_framework.permissions import IsAuthenticated
 
 
@@ -58,7 +59,8 @@ class DashboardAPIView(APIView):
         current_session = AcademicSession.objects.filter(school=school, is_current=True).first()
         current_term = Term.objects.filter(session=current_session, is_current=True).first()
         active_classes = ClassLevel.objects.filter(school=school).count()
-
+        students = Student.objects.filter(class_level__school__user = user).count()
+        subjects = Subject.objects.filter(school__user = user).count()
         # Example fallback values
         session_name = current_session.name if current_session else "Not Set"
         term_name = current_term.name if current_term else "Not Set"
@@ -67,10 +69,11 @@ class DashboardAPIView(APIView):
             "current_session": session_name,
             "current_term": term_name,
             "active_classes": active_classes,
+            "total_subjects":subjects,
             "school_info": {
                 "school_name": school.school_name,
                 "location": school.school_address or "Not Set",
-                "total_students": 1250 
+                "total_students": students 
             }
         }
 
@@ -235,74 +238,110 @@ class DownloadTemplateView(APIView):
         response['Content-Disposition'] = f'attachment; filename="{template_filename}"'
         return response
     
-    
 
-class UploadStudentsView(generics.GenericAPIView):
-    permission_classes = [IsAuthenticated]
+class PreviewStudentsUploadView(generics.GenericAPIView):
+    # permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+
     def post(self, request):
         file = request.FILES.get('file')
         class_level_id = request.data.get('classLevel')
 
         if not file:
             return Response({'error': 'No file uploaded.'}, status=status.HTTP_400_BAD_REQUEST)
+
         if not class_level_id:
             return Response({'error': 'Class Level not selected.'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        
-        
+
         try:
             df = pd.read_excel(file)
         except Exception as e:
             return Response({'error': f'Invalid Excel file: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
         required_columns = ['Name', 'Other info']
         if not all(col in df.columns for col in required_columns):
-            return Response({'error': f'Missing required columns. Required: {required_columns}'}, status=status.HTTP_400_BAD_REQUEST)
-        
+            return Response({
+                'error': f'Missing required columns. Required: {required_columns}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
-        classLevel = ClassLevel.objects.filter(school=school, id=class_level_id).first()
-        if not classLevel:
+        class_level = ClassLevel.objects.filter(school=school, id=class_level_id).first()
+
+        if not class_level:
             return Response({'error': 'Invalid class level selected.'}, status=status.HTTP_400_BAD_REQUEST)
-        students_to_create = []
-        skipped_rows = 0
-        updated_rows = 0
-        total_rows = len(df)
+
+        cleaned_data = []
 
         for _, row in df.iterrows():
-            # Check for empty required fields
-            if any(pd.isna(row[col]) or str(row[col]).strip() == '' for col in required_columns):
+            name = str(row['Name']).strip() if not pd.isna(row['Name']) else ''
+            other_info = str(row['Other info']).strip() if not pd.isna(row['Other info']) else ''
+
+            if name and other_info:
+                cleaned_data.append({
+                    'name': name,
+                    'other_info': other_info,
+                })
+
+        return Response({
+            'class_level': class_level.name,
+            'class_level_id': class_level.id,
+            'students': cleaned_data,
+            'total_valid': len(cleaned_data)
+        }, status=status.HTTP_200_OK)  
+
+class UploadStudentsView(generics.GenericAPIView):
+    # permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        students = request.data.get('students', [])
+        class_level_id = request.data.get('class_level_id')
+
+        if not students:
+            return Response({'error': 'No students provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not class_level_id:
+            return Response({'error': 'Class Level ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+        class_level = ClassLevel.objects.filter(school=school, id=class_level_id).first()
+
+        if not class_level:
+            return Response({'error': 'Invalid class level selected.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        students_to_create = []
+        updated_rows = 0
+        skipped_rows = 0
+
+        for student in students:
+            name = student.get('name', '').strip()
+            other_info = student.get('other_info', '').strip()
+
+            if not name or not other_info:
                 skipped_rows += 1
                 continue
 
-            try:
-                student = Student.objects.filter(name__iexact=row['Name'].strip(), class_level=classLevel).first()
-                if student:
-                    # Update existing student
-                    student.title = row['Other info']
-                    student.save()
-                    updated_rows += 1
-                    continue
-                product = Student(
-                    class_level = classLevel,
-                    name=row['Name'],
-                    other_info=row['Other info'],
-                )
-                students_to_create.append(product)
-                
-            except Exception:
-                print("hi")
-                skipped_rows += 1
+            existing = Student.objects.filter(name__iexact=name, class_level=class_level).first()
+            if existing:
+                existing.other_info = other_info
+                existing.save()
+                updated_rows += 1
+                continue
+
+            students_to_create.append(Student(
+                name=name,
+                other_info=other_info,
+                class_level=class_level
+            ))
 
         Student.objects.bulk_create(students_to_create)
-        saved_rows = len(students_to_create)
 
         return Response({
-            'message': 'Students upload completed.',
-            'total_collected': total_rows,
-            'total_saved': saved_rows,
-            'total_skipped': skipped_rows,
-            "updated_rows": updated_rows
+            'message': 'Student upload successful.',
+            'saved': len(students_to_create),
+            'updated': updated_rows,
+            'skipped': skipped_rows
         }, status=status.HTTP_201_CREATED)
 
 
@@ -310,6 +349,14 @@ class UploadStudentsView(generics.GenericAPIView):
 class ResultListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request, student_id, term_id, session_id):
+        user = request.user
+        session = AcademicSession.objects.filter(id = session_id, is_current=True).first()
+        if not session:
+            return Response({'error': 'Academic session not set yet.'}, status=status.HTTP_400_BAD_REQUEST)
+        term = Term.objects.filter(session=session, is_current=True).first()
+        if not term:
+            return Response({'error': 'Academic session term not set yet.'}, status=status.HTTP_400_BAD_REQUEST)
+        
         # Filter results for a particular student, term, and session
         results = Result.objects.filter(
             student_id=student_id,
@@ -336,3 +383,212 @@ class ResultListCreateAPIView(APIView):
         })
 
 
+
+class SubjectsListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        user = request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+        subjects = Subject.objects.filter(school=school)
+        serializer = SubjectsSerializer(subjects, many=True)
+        return Response(serializer.data)
+    
+    def post(self, request):
+        user = request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+        name = request.data.get("name", "").strip()
+
+        # Check for duplicate name in the same school
+        if Subject.objects.filter(school=school, name__iexact=name).exists():
+            return Response(
+                {"error": "Subject with this name already exists."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Create new subject
+        subject = Subject.objects.create(school=school, name=name)
+        serializer = SubjectsSerializer(subject)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    
+class SubjectUpdateDeleteAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def put(self, request, subject_id):
+        subject = get_object_or_404(Subject, id=subject_id)
+        serializer = StudentSerializer(subject, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, subject_id):
+        subject = get_object_or_404(Subject, id=subject_id)
+        subject.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    
+    
+    
+class GradingListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        user = request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+        grade = GradingSystem.objects.filter(school=school)
+        serializer = GradeSystemSerializer(grade, many=True)
+        return Response(serializer.data)
+    
+    def post(self, request):
+        user = request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+
+        # Extract fields from request.data
+        min_score = request.data.get('min_score')
+        max_score = request.data.get('max_score')
+        grade = request.data.get('grade')
+        remark = request.data.get('remark')
+
+        data = {
+            'min_score': min_score,
+            'max_score': max_score,
+            'grade': grade,
+            'remark': remark,
+        }
+
+        serializer = GradeSystemSerializer(data=data)
+        if serializer.is_valid():
+            serializer.save(school=school)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    
+class GradingUpdateDeleteAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def put(self, request, grade_id):
+        grade = get_object_or_404(GradingSystem, id=grade_id)
+        serializer = GradeSystemSerializer(grade, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, grade_id):
+        grade = get_object_or_404(GradingSystem, id=grade_id)
+        grade.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+import csv
+class DownloadAllStudentsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+        if not school:
+            return HttpResponse("School not found for the user.", status=400)
+
+        class_levels = ClassLevel.objects.filter(school=school).prefetch_related('students')
+
+        if not class_levels.exists():
+            return HttpResponse("No class levels found.", status=404)
+
+        # Use Django HttpResponse to generate CSV
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="all_students.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(['Name', 'Other Info', 'Class'])
+
+        for class_level in class_levels:
+            for student in class_level.students.all():
+                writer.writerow([
+                    student.name,
+                    student.other_info or '',
+                    class_level.name
+                ])
+
+        return response
+
+    
+    
+class SchoolProfileAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+        serializer = SchoolProfileSerializer(school)
+        return Response(serializer.data)
+
+    def put(self, request):
+        user = request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+        serializer = SchoolProfileSerializer(school, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=400)
+    
+    
+
+class SchoolUsersListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # Get the school profile where this user is one of the admins
+        school = SchoolProfile.objects.filter(user=user).first()
+        if not school:
+            return Response({'error': 'School not found for this user.'}, status=404)
+
+        # Get all users related to the school excluding the current user
+        users = school.user.exclude(id=user.id)
+
+        serializer = UserSerializer(users, many=True, context={'request': request})
+        return Response(serializer.data)
+    
+    
+    
+    
+class CreateUserView(generics.CreateAPIView):
+    serializer_class = CreateUserSerializer
+    queryset = User.objects.all()
+
+    def perform_create(self, serializer):
+        email = serializer.validated_data['email']
+        user = User.objects.create_user(
+            email=email,
+            password='pass1234',
+            is_active=True,
+            is_manager = True,
+            phone = self.request.user.phone
+        )
+        
+        school = SchoolProfile.objects.filter(user=self.request.user).first()
+        school.user.add(user)
+    
+        
+        
+class DeactivateUserView(APIView):
+    def post(self, request, user_id, *args, **kwargs):
+        try:
+            user = User.objects.get(id=user_id)
+            user.is_active = not user.is_active
+            user.save()
+            return Response({"message": True, "is_active": user.is_active}, status=201)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        
+        
+        
+class SubscriptionListView(generics.ListAPIView):
+    serializer_class = SubscriptionSerializer
+    
+    def get_queryset(self):
+        user = self.request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+        return Subscription.objects.filter(school=school).order_by('-expires_on')

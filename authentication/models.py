@@ -20,7 +20,6 @@ class User(AbstractUser):
     email = models.EmailField(max_length=40, unique=True)
     phone = models.CharField(
         max_length=17,
-        unique=True,
         validators=[validate_phone]
     )
     is_admin = models.BooleanField(default=False)

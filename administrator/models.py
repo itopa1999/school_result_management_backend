@@ -4,7 +4,7 @@ from django.db import models
 
 class SchoolProfile(models.Model):
     user = models.ManyToManyField('authentication.User')
-    school_name = models.CharField(max_length=255)
+    school_name = models.CharField(max_length=255, unique=True)
     school_address = models.CharField(max_length=255, null=True, blank=True)
     is_primary = models.BooleanField(default=False)
     is_secondary = models.BooleanField(default=False)
@@ -25,7 +25,7 @@ class SchoolProfile(models.Model):
         return self.school_name
 
 class ClassLevel(models.Model):
-    school = models.ForeignKey(SchoolProfile, on_delete=models.CASCADE, related_name='class_levels')
+    school = models.ForeignKey(SchoolProfile, on_delete=models.SET_NULL, null=True, related_name='class_levels')
     name = models.CharField(max_length=50)
     
     class Meta:
@@ -39,9 +39,14 @@ class ClassLevel(models.Model):
     
     
 class Student(models.Model):
-    class_level = models.ForeignKey(ClassLevel, on_delete=models.CASCADE, related_name='students')
+    class_level = models.ForeignKey(ClassLevel, on_delete=models.SET_NULL, null=True, related_name='students')
     name = models.CharField(max_length=100)
     other_info = models.CharField(max_length=100,blank=True, null=True)
+    
+    def save(self, *args, **kwargs):
+        # Calculate CA and total score
+        self.name = self.name.strip().capitalize()
+        super().save(*args, **kwargs)
         
     class Meta:
         ordering = ['-id']
@@ -49,18 +54,12 @@ class Student(models.Model):
             models.Index(fields=['-name']),
         ]
         
-    def save(self, *args, **kwargs):
-        if self.name:
-            self.name = self.name.strip()
-            self.name = self.name[0].upper() + self.name[1:]
-        super().save(*args, **kwargs)
-        
     def __str__(self):
         return self.name
     
     
 class AcademicSession(models.Model):
-    school = models.ForeignKey(SchoolProfile, on_delete=models.CASCADE, related_name="sessions")
+    school = models.ForeignKey(SchoolProfile, on_delete=models.SET_NULL, null=True, related_name="sessions")
     name = models.CharField(max_length=20)
     is_current = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -76,7 +75,7 @@ class AcademicSession(models.Model):
         return self.name
 
 class Term(models.Model):
-    session = models.ForeignKey(AcademicSession, on_delete=models.CASCADE, related_name="terms")
+    session = models.ForeignKey(AcademicSession, on_delete=models.SET_NULL, null=True, related_name="terms")
     name = models.CharField(max_length=20)
     is_current = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -90,91 +89,76 @@ class Term(models.Model):
     def __str__(self):
         return f"{self.name} - {self.session.name}"
     
-from django.db.models import Sum
     
+from django.db.models import Sum
+
 class Result(models.Model):
-    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='student_result')
-    term = models.ForeignKey(Term, on_delete=models.CASCADE, related_name='result_term')
+    student = models.ForeignKey(Student, on_delete=models.SET_NULL, null=True, related_name='student_result')
+    term = models.ForeignKey(Term, on_delete=models.SET_NULL, null=True, related_name='result_term')
     session = models.ForeignKey(AcademicSession, on_delete=models.CASCADE)
-    subjects =  models.CharField(max_length=20)
+    subjects = models.CharField(max_length=20)
     first_test = models.PositiveIntegerField(blank=True, null=True)
     second_test = models.PositiveIntegerField(blank=True, null=True)
     third_test = models.PositiveIntegerField(blank=True, null=True)
     c_a = models.PositiveIntegerField(blank=True, null=True)
     exam = models.PositiveIntegerField(blank=True, null=True)
     total_score = models.PositiveIntegerField(blank=True, null=True)
-    grade =  models.CharField(max_length=20,blank=True, null=True)
-    
+    grade = models.CharField(max_length=20, blank=True, null=True)
+
     def save(self, *args, **kwargs):
-        # Calculate total_score
-        self.c_a = self.first_test + self.second_test + self.third_test 
-        exam = self.exam or 0
-        self.total_score = self.c_a + exam
-        
-        # Determine grade based on total_score (using Nigerian grading system example)
-        if self.total_score >= 70:
-            self.grade = 'A'
-        elif self.total_score >= 60:
-            self.grade = 'B'
-        elif self.total_score >= 50:
-            self.grade = 'C'
-        elif self.total_score >= 45:
-            self.grade = 'D'
-        elif self.total_score >= 40:
-            self.grade = 'E'
-        else:
-            self.grade = 'F'
-        
+        # Calculate CA and total score
+        self.c_a = (self.first_test or 0) + (self.second_test or 0) + (self.third_test or 0)
+        self.total_score = self.c_a + (self.exam or 0)
+
+        # Fetch grade from GradingSystem based on this student's school
+        school = self.session.school  # assumes session has FK to SchoolProfile
+        grading = GradingSystem.objects.filter(
+            school=school,
+            min_score__lte=self.total_score,
+            max_score__gte=self.total_score
+        ).first()
+
+        self.grade = grading.grade if grading else 'N/A'
+
+        # Save the result first
         super().save(*args, **kwargs)
-        
-        
-        # Aggregate total CA, exam, total_score for this student and term
-        agg = Result.objects.filter(student=self.student, term=self.term, session = self.session).aggregate(
+
+        # Aggregate all results for this student in this term and session
+        agg = Result.objects.filter(
+            student=self.student,
+            term=self.term,
+            session=self.session
+        ).aggregate(
             total_ca=Sum('c_a'),
             total_exam=Sum('exam'),
             total_score=Sum('total_score')
         )
-        
-        # Calculate overall term grade based on total_score
+
         total_score = agg['total_score'] or 0
-        
-        if total_score >= 70:
-            term_grade = 'A'
-        elif total_score >= 60:
-            term_grade = 'B'
-        elif total_score >= 50:
-            term_grade = 'C'
-        elif total_score >= 45:
-            term_grade = 'D'
-        elif total_score >= 40:
-            term_grade = 'E'
-        else:
-            term_grade = 'F'
-        
-        # Update or create TermTotalMark entry
+
+        # Get overall grade for the term
+        term_grading = GradingSystem.objects.filter(
+            school=school,
+            min_score__lte=total_score,
+            max_score__gte=total_score
+        ).first()
+
+        term_grade = term_grading.grade if term_grading else 'N/A'
+        remarks = term_grading.remark if term_grading else ''
+
+        # Update or create the TermTotalMark record
         TermTotalMark.objects.update_or_create(
             student=self.student,
             term=self.term,
-            session = self.session,
+            session=self.session,
             defaults={
                 'total_ca': agg['total_ca'] or 0,
                 'total_exam': agg['total_exam'] or 0,
                 'total_score': total_score,
                 'grade': term_grade,
-                'remarks': self.get_remarks(term_grade),
+                'remarks': remarks,
             }
         )
-
-    def get_remarks(self, grade):
-        remarks_map = {
-            'A': 'Excellent performance',
-            'B': 'Very good',
-            'C': 'Good',
-            'D': 'Fair',
-            'E': 'Pass',
-            'F': 'Fail',
-        }
-        return remarks_map.get(grade, '')
     
     class Meta:
         ordering = ['-id']
@@ -187,9 +171,9 @@ class Result(models.Model):
     
     
 class TermTotalMark(models.Model):
-    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='term_totals')
-    term = models.ForeignKey(Term, on_delete=models.CASCADE, related_name='term_totals')
-    session = models.ForeignKey(AcademicSession, on_delete=models.CASCADE, related_name='term_totals')
+    student = models.ForeignKey(Student, on_delete=models.SET_NULL, null=True, related_name='term_totals')
+    term = models.ForeignKey(Term, on_delete=models.SET_NULL, null=True, related_name='term_totals')
+    session = models.ForeignKey(AcademicSession, on_delete=models.SET_NULL, null=True, related_name='term_totals')
     total_ca = models.PositiveIntegerField(default=0)     # Continuous Assessment total
     total_exam = models.PositiveIntegerField(default=0)   # Exam total
     total_score = models.PositiveIntegerField(default=0)  # Overall total score for the term
@@ -203,3 +187,85 @@ class TermTotalMark(models.Model):
 
     def __str__(self):
         return f"{self.student.name} - {self.session.name} - {self.term.name}"
+    
+    
+    
+
+# settings
+
+class Subject(models.Model):
+    school = models.ForeignKey(SchoolProfile, on_delete=models.SET_NULL, null=True, related_name='class_subjects')
+    name = models.CharField(max_length=50, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    
+    def save(self, *args, **kwargs):
+        # Calculate CA and total score
+        self.name = self.name.strip().capitalize()
+        super().save(*args, **kwargs)
+
+    class Meta:
+        ordering = ['-id']
+        indexes = [
+            models.Index(fields=['-name']),
+        ]
+    
+    def __str__(self):
+        return f"{self.school.school_name} - {self.name}"
+    
+    
+    
+class GradingSystem(models.Model):
+    school = models.ForeignKey(SchoolProfile, on_delete=models.SET_NULL, null=True, related_name='school_grading_system')
+    min_score = models.PositiveIntegerField()
+    max_score = models.PositiveIntegerField()
+    grade = models.CharField(max_length=2)
+    remark = models.CharField(max_length=255)
+
+    class Meta:
+        ordering = ['-min_score']  # ensures highest ranges come first
+
+    def __str__(self):
+        return f"{self.grade} ({self.min_score}-{self.max_score})"
+    
+
+from django.utils import timezone
+from datetime import timedelta
+from django.core.exceptions import ValidationError
+    
+class Subscription(models.Model):
+    STATUS_CHOICES = [
+        ('free', 'Free'),
+        ('active', 'Active'),
+        ('expired', 'Expired'),
+    ]
+    
+    school = models.ForeignKey(SchoolProfile, on_delete=models.SET_NULL, null=True, related_name="sub_sessions")
+    session = models.CharField(max_length=50)
+    paid_on = models.DateField(null=True, blank=True)
+    expires_on = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')
+
+    def save(self, *args, **kwargs):
+        today = timezone.now().date()
+
+        # Set default expiry if not already set
+        if not self.expires_on:
+            self.expires_on = today + timedelta(weeks=14)  # 3 months + 1 week
+
+        # Update status based on expiry
+        if self.expires_on < today:
+            self.status = 'expired'
+        elif self.status != 'expired':
+            # Retain original status if still valid
+            self.status = 'active' if self.paid_on else 'free'
+
+        super().save(*args, **kwargs)
+        
+    class Meta:
+        ordering = ['-id']
+        indexes = [
+            models.Index(fields=['-id']),
+        ]
+
+    def __str__(self):
+        return f"{self.session} - {self.status.capitalize()}"
