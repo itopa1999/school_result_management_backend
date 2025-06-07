@@ -4,12 +4,19 @@ from administrator.models import AcademicSession, ClassLevel, GradingSystem, Res
 from authentication.models import User
 
 
+
+class SubscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Subscription
+        fields = ['id', 'session', 'status', 'paid_on', 'expires_on']
+
 class DashboardSerializer(serializers.Serializer):
     current_session = serializers.CharField()
     current_term = serializers.CharField()
     active_classes = serializers.IntegerField()  
     total_subjects = serializers.IntegerField()    
     school_info = serializers.DictField()
+    subscription_info = SubscriptionSerializer(allow_null=True)
 
 
 class TermSerializer(serializers.ModelSerializer):
@@ -31,9 +38,10 @@ class ClassLevelSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'school_name']
 
 class StudentSerializer(serializers.ModelSerializer):
+    class_name = serializers.CharField(source='class_level.name', read_only=True)
     class Meta:
         model = Student
-        fields = ['id', 'name', 'other_info']
+        fields = ['id', 'name', 'other_info','class_name']
         
         
 class ResultSerializer(serializers.ModelSerializer):
@@ -48,7 +56,7 @@ class ResultSerializer(serializers.ModelSerializer):
             'term_name',
             'session_name',
             'subjects', 'first_test', 'second_test', 'third_test',
-            'c_a', 'exam', 'total_score', 'grade'
+            'c_a', 'exam', 'total_score', 'grade', 'remark'
         ]
 
 
@@ -81,7 +89,7 @@ class MainInfoSerializer(serializers.Serializer):
     school_name = serializers.CharField()
     
     
-class SchoolProfileSerializer(serializers.Serializer):
+class SchoolProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = SchoolProfile
         fields = ['id', 'school_name','school_address']
@@ -106,7 +114,3 @@ class CreateUserSerializer(serializers.ModelSerializer):
         fields = ['email']
         
         
-class SubscriptionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Subscription
-        fields = ['id', 'session', 'status', 'paid_on', 'expires_on']

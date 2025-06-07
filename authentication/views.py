@@ -164,12 +164,17 @@ class UserVerificationView(generics.GenericAPIView):
                 access_token = str(refresh.access_token)
                 expiration_time = datetime.fromtimestamp(AccessToken(access_token)["exp"])
                 profile_pic_url = request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None
+                school = SchoolProfile.objects.filter(user=user).first()
                 return Response(
                     {   "message":"your account has been verified",
                         "id": user.id,
                         "is_admin": user.is_admin,
                         "is_manager": user.is_manager,
                         "profile_pic":profile_pic_url,
+                        "school_info": {
+                            "school_name": school.school_name,
+                            "location": school.school_address or "Not Set",
+                        },
                         "refresh": str(refresh),
                         "access": access_token,
                         "expiry": expiration_time,
@@ -262,12 +267,17 @@ class LoginView(generics.GenericAPIView):
         access_token = str(refresh.access_token)
         expiration_time = datetime.fromtimestamp(AccessToken(access_token)["exp"])
         profile_pic_url = request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None
+        school = SchoolProfile.objects.filter(user=user).first()
         return Response(
             {
                 "id": user.id,
                 "is_admin": user.is_admin,
                 "is_manager": user.is_manager,
-                "profile_pic":profile_pic_url, 
+                "profile_pic":profile_pic_url,
+                "school_info": {
+                    "school_name": school.school_name,
+                    "location": school.school_address or "Not Set",
+                },
                 "refresh": str(refresh),
                 "access": access_token,
                 "expiry": expiration_time,

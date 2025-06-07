@@ -18,7 +18,7 @@ class SchoolProfile(models.Model):
         ]
     
     def save(self, *args, **kwargs):
-        self.school_name = self.school_name.capitalize()
+        self.school_name = self.school_name.strip().capitalize()
         super().save(*args, **kwargs)
         
     def __str__(self):
@@ -33,6 +33,10 @@ class ClassLevel(models.Model):
         indexes = [
             models.Index(fields=['-name']),
         ]
+        
+    def save(self, *args, **kwargs):
+        self.name = self.name.strip().capitalize()
+        super().save(*args, **kwargs)
     
     def __str__(self):
         return f"{self.school.school_name} - {self.name}"
@@ -44,7 +48,6 @@ class Student(models.Model):
     other_info = models.CharField(max_length=100,blank=True, null=True)
     
     def save(self, *args, **kwargs):
-        # Calculate CA and total score
         self.name = self.name.strip().capitalize()
         super().save(*args, **kwargs)
         
@@ -70,6 +73,10 @@ class AcademicSession(models.Model):
             models.Index(fields=['-name']),
         ]
 
+    def save(self, *args, **kwargs):
+        self.name = self.name.strip().capitalize()
+        super().save(*args, **kwargs)
+
     
     def __str__(self):
         return self.name
@@ -85,6 +92,10 @@ class Term(models.Model):
         indexes = [
             models.Index(fields=['-name']),
         ]
+        
+    def save(self, *args, **kwargs):
+        self.name = self.name.strip().capitalize()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.name} - {self.session.name}"
@@ -104,8 +115,10 @@ class Result(models.Model):
     exam = models.PositiveIntegerField(blank=True, null=True)
     total_score = models.PositiveIntegerField(blank=True, null=True)
     grade = models.CharField(max_length=20, blank=True, null=True)
+    remark = models.CharField(max_length=20, blank=True, null=True)
 
     def save(self, *args, **kwargs):
+        self.subjects = self.subjects.strip().capitalize()
         # Calculate CA and total score
         self.c_a = (self.first_test or 0) + (self.second_test or 0) + (self.third_test or 0)
         self.total_score = self.c_a + (self.exam or 0)
@@ -119,6 +132,7 @@ class Result(models.Model):
         ).first()
 
         self.grade = grading.grade if grading else 'N/A'
+        self.remark = grading.remark if grading else 'N/A'
 
         # Save the result first
         super().save(*args, **kwargs)
@@ -223,6 +237,11 @@ class GradingSystem(models.Model):
 
     class Meta:
         ordering = ['-min_score']  # ensures highest ranges come first
+        
+    def save(self, *args, **kwargs):
+        self.grade = self.grade.strip().capitalize()
+        self.remark = self.remark.strip().capitalize()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.grade} ({self.min_score}-{self.max_score})"
@@ -246,6 +265,7 @@ class Subscription(models.Model):
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')
 
     def save(self, *args, **kwargs):
+        self.session = self.session.strip().capitalize()
         today = timezone.now().date()
 
         # Set default expiry if not already set

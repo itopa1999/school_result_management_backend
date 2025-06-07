@@ -17,32 +17,32 @@ from rest_framework.permissions import IsAuthenticated
 
 
 
-class MainInfoAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+# class MainInfoAPIView(APIView):
+#     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        # Get the school for the current user
-        user = request.user
-        school = SchoolProfile.objects.filter(user=user).first()
+#     def get(self, request):
+#         # Get the school for the current user
+#         user = request.user
+#         school = SchoolProfile.objects.filter(user=user).first()
         
-        if not school:
-            return Response({"detail": "No school profile associated with user."}, status=404)
+#         if not school:
+#             return Response({"detail": "No school profile associated with user."}, status=404)
 
-        current_session = AcademicSession.objects.filter(school=school, is_current=True).first()
-        current_term = Term.objects.filter(session=current_session, is_current=True).first()
+#         current_session = AcademicSession.objects.filter(school=school, is_current=True).first()
+#         current_term = Term.objects.filter(session=current_session, is_current=True).first()
+        
+#         # Example fallback values
+#         session_id = current_session.id if current_session else 0
+#         term_id = current_term.id if current_term else 0
 
-        # Example fallback values
-        session_id = current_session.id if current_session else 0
-        term_id = current_term.id if current_term else 0
+#         data = {
+#             "current_session_id": session_id,
+#             "current_term_id": term_id,
+#             "school_name": school.school_name,
+#         }
 
-        data = {
-            "current_session_id": session_id,
-            "current_term_id": term_id,
-            "school_name": school.school_name,
-        }
-
-        serializer = MainInfoSerializer(data)
-        return Response(serializer.data)
+#         serializer = MainInfoSerializer(data)
+#         return Response(serializer.data)
     
 
 class DashboardAPIView(APIView):
@@ -64,7 +64,11 @@ class DashboardAPIView(APIView):
         # Example fallback values
         session_name = current_session.name if current_session else "Not Set"
         term_name = current_term.name if current_term else "Not Set"
-
+        
+        current_sub = Subscription.objects.filter(school=school).first()
+        
+        serializer_current_sub = SubscriptionSerializer(current_sub).data if current_sub else None
+        print(serializer_current_sub)
         data = {
             "current_session": session_name,
             "current_term": term_name,
@@ -74,7 +78,9 @@ class DashboardAPIView(APIView):
                 "school_name": school.school_name,
                 "location": school.school_address or "Not Set",
                 "total_students": students 
-            }
+            },
+            "subscription_info": serializer_current_sub
+
         }
 
         serializer = DashboardSerializer(data)
@@ -240,7 +246,7 @@ class DownloadTemplateView(APIView):
     
 
 class PreviewStudentsUploadView(generics.GenericAPIView):
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
@@ -322,7 +328,7 @@ class UploadStudentsView(generics.GenericAPIView):
                 skipped_rows += 1
                 continue
 
-            existing = Student.objects.filter(name__iexact=name, class_level=class_level).first()
+            existing = Student.objects.filter(name__iexact=name.capitalize(), class_level=class_level).first()
             if existing:
                 existing.other_info = other_info
                 existing.save()
@@ -346,31 +352,42 @@ class UploadStudentsView(generics.GenericAPIView):
 
 
 
-class ResultListCreateAPIView(APIView):
+class ResultListAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    def get(self, request, student_id, term_id, session_id):
+    def get(self, request, student_id):
         user = request.user
-        session = AcademicSession.objects.filter(id = session_id, is_current=True).first()
+        
+        try:
+            student = Student.objects.get(id=student_id)
+        except Student.DoesNotExist:
+            return Response({"error": "Invalid student"}, status=404)
+        
+        school = SchoolProfile.objects.filter(user=user).first()
+        if not school:
+            return Response({"error": "School profile not found."}, status=404)
+
+        session = AcademicSession.objects.filter(school=school, is_current=True).first()
         if not session:
-            return Response({'error': 'Academic session not set yet.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Session not set"}, status=404)
+
         term = Term.objects.filter(session=session, is_current=True).first()
         if not term:
-            return Response({'error': 'Academic session term not set yet.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Term not set"}, status=404)
         
         # Filter results for a particular student, term, and session
         results = Result.objects.filter(
-            student_id=student_id,
-            term_id=term_id,
-            session_id=session_id
+            student=student,
+            term=term,
+            session=session
         )
         results_serializer = ResultSerializer(results, many=True)
 
         # Get the corresponding TermTotalMark if it exists
         try:
             term_total = TermTotalMark.objects.get(
-                student_id=student_id,
-                term_id=term_id,
-                session_id=session_id
+                student_id=student,
+                term_id=term,
+                session_id=session
             )
             term_total_serializer = TermTotalMarkSerializer(term_total)
         except TermTotalMark.DoesNotExist:
@@ -493,7 +510,7 @@ class DownloadAllStudentsAPIView(APIView):
         class_levels = ClassLevel.objects.filter(school=school).prefetch_related('students')
 
         if not class_levels.exists():
-            return HttpResponse("No class levels found.", status=404)
+            return HttpResponse("No class levels found.", status=400)
 
         # Use Django HttpResponse to generate CSV
         response = HttpResponse(content_type='text/csv')
@@ -592,3 +609,55 @@ class SubscriptionListView(generics.ListAPIView):
         user = self.request.user
         school = SchoolProfile.objects.filter(user=user).first()
         return Subscription.objects.filter(school=school).order_by('-expires_on')
+    
+
+from rest_framework.pagination import PageNumberPagination
+class StudentPagination(PageNumberPagination):
+    page_size = 4
+    max_page_size = 40 
+    
+    
+class StudentsListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+        students = Student.objects.filter(class_level__school=school)
+
+        paginator = StudentPagination()
+        paginated_students = paginator.paginate_queryset(students, request)
+        serializer = StudentSerializer(paginated_students, many=True)
+
+        return paginator.get_paginated_response(serializer.data)
+    
+    
+    
+class SchoolDetailsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+        print("school:", school)
+        serializer = SchoolProfileSerializer(school)
+        print("serialized data:", serializer.data)
+        return Response({"school": serializer.data}, status=200)
+    
+    
+    
+class SchoolProfileUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request):
+        user = request.user
+        school = SchoolProfile.objects.filter(user=user).first()
+        if not school:
+            return Response({"error": "School profile not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = SchoolProfileSerializer(school, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
