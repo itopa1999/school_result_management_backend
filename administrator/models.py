@@ -1,3 +1,5 @@
+import random
+import string
 from django.db import models
 # Create your models here.
 
@@ -116,8 +118,15 @@ class Result(models.Model):
     total_score = models.PositiveIntegerField(blank=True, null=True)
     grade = models.CharField(max_length=20, blank=True, null=True)
     remark = models.CharField(max_length=20, blank=True, null=True)
+    
+    def clean(self):
+        if self.c_a is not None and self.exam is not None:
+            total = self.c_a + self.exam
+            if total > 100:
+                raise ValidationError(f"C.A + Exam score cannot exceed 100 for {self.subjects}. Current total is {total}.")
 
     def save(self, *args, **kwargs):
+        self.full_clean()
         self.subjects = self.subjects.strip().capitalize()
         # Calculate CA and total score
         self.c_a = (self.first_test or 0) + (self.second_test or 0) + (self.third_test or 0)
@@ -188,9 +197,11 @@ class TermTotalMark(models.Model):
     student = models.ForeignKey(Student, on_delete=models.SET_NULL, null=True, related_name='term_totals')
     term = models.ForeignKey(Term, on_delete=models.SET_NULL, null=True, related_name='term_totals')
     session = models.ForeignKey(AcademicSession, on_delete=models.SET_NULL, null=True, related_name='term_totals')
-    total_ca = models.PositiveIntegerField(default=0)     # Continuous Assessment total
-    total_exam = models.PositiveIntegerField(default=0)   # Exam total
-    total_score = models.PositiveIntegerField(default=0)  # Overall total score for the term
+    total_ca = models.PositiveIntegerField(default=0)
+    total_exam = models.PositiveIntegerField(default=0)
+    total_score = models.PositiveIntegerField(default=0)
+    teacher_comment = models.CharField(max_length=255, blank=True, null=True)
+    principal_comment = models.CharField(max_length=255, blank=True, null=True)
     
     grade = models.CharField(max_length=5, blank=True, null=True)
     remarks = models.CharField(max_length=255, blank=True, null=True)
@@ -209,7 +220,7 @@ class TermTotalMark(models.Model):
 
 class Subject(models.Model):
     school = models.ForeignKey(SchoolProfile, on_delete=models.SET_NULL, null=True, related_name='class_subjects')
-    name = models.CharField(max_length=50, unique=True)
+    name = models.CharField(max_length=50)
     created_at = models.DateTimeField(auto_now_add=True, null=True)
     
     def save(self, *args, **kwargs):
@@ -289,3 +300,49 @@ class Subscription(models.Model):
 
     def __str__(self):
         return f"{self.session} - {self.status.capitalize()}"
+    
+
+
+from django.contrib.auth.hashers import make_password, check_password
+    
+class Parent(models.Model):
+    school = models.ForeignKey(SchoolProfile, on_delete=models.SET_NULL, null=True, related_name="parent_school")
+    name = models.CharField(max_length=100)
+    email = models.EmailField(unique=True)
+    access_code = models.CharField(max_length=60, unique=True)
+    password = models.CharField(max_length=1000, null=True, blank=True)
+    access_code_created = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+    student = models.ManyToManyField('Student')
+
+    @property
+    def access_code_expired(self):
+        return timezone.now() > self.access_code_created + timedelta(days=5)
+    
+    def set_password(self, raw_password):
+        self.password = make_password(raw_password)
+        self.save()
+        
+    def check_password(self, raw_password):
+        return check_password(raw_password, self.password)
+
+    def regenerate_access_code(self):
+        self.access_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=55))
+        self.access_code_created = timezone.now()
+        self.save()
+    
+    
+    def save(self, *args, **kwargs):
+        if not self.access_code:
+            self.access_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=50))
+            self.access_code_created = timezone.now()
+        super().save(*args, **kwargs)
+        
+    class Meta:
+        ordering = ['-id']
+        indexes = [
+            models.Index(fields=['-id']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} (Student: {self.student.name})"

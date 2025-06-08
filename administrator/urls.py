@@ -1,6 +1,7 @@
 from django.urls import path, include
 from .views import *
 from .results import *
+from .parent import *
 
 urlpatterns = [
     
@@ -8,6 +9,7 @@ urlpatterns = [
     path('dashboard/', DashboardAPIView.as_view()),
     path('sessions/', AcademicSessionListAPIView.as_view()),
     path('add/sessions/', StartSessionView.as_view()),
+    path('paystack-confirm-subscription/<str:reference>/', PaystackConfirmSubscriptionView.as_view(), name='paystack-confirm-subscription'),
     path('sessions/<int:pk>/toggle/', ToggleAcademicSessionAPIView.as_view()),
     path('terms/<int:pk>/toggle/', ToggleTermAPIView.as_view()),
     
@@ -44,6 +46,14 @@ urlpatterns = [
     path('result/preview/<int:student_id>/', UploadStudentResultPreviewView.as_view()),
     path('result/upload/', ConfirmUploadStudentResultView.as_view()),
     path('result/reset/<int:student_id>/', ResetStudentResultView.as_view()),
+    path('show/result/<int:student_id>/', ShowStudentResultView.as_view()),
+    path('get/comments/<int:student_id>/', GetStudentCommentView.as_view()),
+    
+    # parent urls
+    
+    path('parent/login/', ParentLoginView.as_view(), name='parent-login'),
+    path('parents/', ParentCreateListsView.as_view(), name='parent-create'),
+    path('parents/<int:pk>/', ParentDetailView.as_view()),
     
 
 ]

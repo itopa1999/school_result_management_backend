@@ -1,10 +1,13 @@
+import secrets
 from django.conf import settings
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404, render
-
+import requests as req
+from django.utils import timezone
 # Create your views here.
 
 
+from django.urls import reverse
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics
@@ -14,7 +17,7 @@ from administrator.serializers import AcademicSessionSerializer, ClassLevelSeria
 from authentication.models import User
 from .models import AcademicSession, ClassLevel, GradingSystem, Result, Student, Subject, Subscription, Term, SchoolProfile, TermTotalMark
 from rest_framework.permissions import IsAuthenticated
-
+from rest_framework.exceptions import PermissionDenied
 
 
 # class MainInfoAPIView(APIView):
@@ -44,6 +47,13 @@ from rest_framework.permissions import IsAuthenticated
 #         serializer = MainInfoSerializer(data)
 #         return Response(serializer.data)
     
+    
+def is_admin(user):
+    return getattr(user, 'is_admin', False)
+
+def is_manager(user):
+    return getattr(user, 'is_manager', False)
+
 
 class DashboardAPIView(APIView):
     permission_classes = [IsAuthenticated]
@@ -91,8 +101,12 @@ class DashboardAPIView(APIView):
 class StartSessionView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         session_name = request.data.get("session_name")
         is_current_session = request.data.get("is_current", False)
+        if isinstance(is_current_session, str):
+            is_current_session = is_current_session.lower() == 'true'
         user = request.user
         if not session_name:
             return Response({"error": "session_name and school_id are required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -104,30 +118,129 @@ class StartSessionView(APIView):
 
         if AcademicSession.objects.filter(school=school, name=session_name).exists():
             return Response({"error": f"Session '{session_name}' already exists for this school."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not AcademicSession.objects.filter(school=school).exists():
+            with transaction.atomic():
+                # Deactivate previous current session/terms if this one is set as current
+                if is_current_session:
+                    AcademicSession.objects.filter(school=school, is_current=True).update(is_current=False)
+                    Term.objects.filter(session__school=school, is_current=True).update(is_current=False)
 
-        with transaction.atomic():
-            # Deactivate previous current session/terms if this one is set as current
-            if is_current_session:
-                AcademicSession.objects.filter(school=school, is_current=True).update(is_current=False)
-                Term.objects.filter(session__school=school, is_current=True).update(is_current=False)
-
-            # Create session
-            new_session = AcademicSession.objects.create(
-                school=school,
-                name=session_name,
-                is_current=is_current_session
-            )
-
-            # Create terms
-            term_names = ["First Term", "Second Term", "Third Term"]
-            for term_name in term_names:
-                Term.objects.create(
-                    session=new_session,
-                    name=term_name
+                # Create session
+                new_session = AcademicSession.objects.create(
+                    school=school,
+                    name=session_name,
+                    is_current=is_current_session
                 )
 
-        return Response({"message": f"Session '{session_name}' created with 3 terms."},
-                        status=status.HTTP_201_CREATED)
+                # Create terms
+                term_names = ["First Term", "Second Term", "Third Term"]
+                for term_name in term_names:
+                    Term.objects.create(
+                        session=new_session,
+                        name=term_name
+                    )
+                
+                Subscription.objects.create(
+                    school = school,
+                    session = f"{new_session.name} session"
+                )
+
+            return Response({"message": f"Session '{session_name}' created with 3 terms."},
+                            status=status.HTTP_201_CREATED)
+        
+        else:
+            ref = secrets.token_urlsafe(15)
+            amount = int(float(settings.SUBSCRIPTION_PRICE)) * 100
+            
+            redirect_url = request.build_absolute_uri(
+                reverse('paystack-confirm-subscription', kwargs={"reference": ref})
+            )
+            
+            paystack_data = {
+                "email": user.email,
+                "amount": amount,
+                "reference": ref,
+                "metadata": {
+                    "school_id" : school.id,
+                    "session_name": f"{session_name} session",
+                    "is_current_session" : is_current_session,
+                },
+                "callback_url": redirect_url,
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
+                "Content-Type": "application/json",
+            }
+
+            paystack_url = "https://api.paystack.co/transaction/initialize"
+            response = req.post(paystack_url, headers=headers, json=paystack_data)
+
+            if response.status_code == 200:
+                link = response.json()["data"]["authorization_url"]
+                return Response({"checkout_url": link}, status=status.HTTP_200_OK)
+
+            return Response({"error": "Could not initialize payment."}, status=response.status_code)
+            
+
+
+
+class PaystackConfirmSubscriptionView(APIView):
+
+    def get(self, request, reference, *args, **kwargs):
+        if not reference:
+            return Response({"error": "Reference is required"}, status=400)
+
+        url = f"https://api.paystack.co/transaction/verify/{reference}"
+        headers = {
+            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
+        }
+
+        response = req.get(url, headers=headers)
+        data = response.json()
+
+        if data['status'] and data['data']['status'] == 'success':
+            metadata = data['data']['metadata']
+            
+            print(metadata)
+            school_id = metadata.get("school_id")
+            session_name = metadata.get("session_name")
+            is_current_session = metadata.get("is_current_session", False)
+            if isinstance(is_current_session, str):
+                is_current_session = is_current_session.lower() == 'true'
+            school = SchoolProfile.objects.get(id=school_id)
+            
+            with transaction.atomic():
+                # Deactivate previous current session/terms if this one is set as current
+                if is_current_session:
+                    AcademicSession.objects.filter(school=school, is_current=True).update(is_current=False)
+                    Term.objects.filter(session__school=school, is_current=True).update(is_current=False)
+
+                # Create session
+                new_session = AcademicSession.objects.create(
+                    school=school,
+                    name=session_name,
+                    is_current=is_current_session
+                )
+
+                # Create terms
+                term_names = ["First Term", "Second Term", "Third Term"]
+                for term_name in term_names:
+                    Term.objects.create(
+                        session=new_session,
+                        name=term_name
+                    )
+                Subscription.objects.create(
+                    school = school,
+                    session = session_name,
+                    paid_on = timezone.now()
+                )
+        
+
+            return Response({"message": "Subscription was successful."}, status=200)
+        return Response({"error": "Subscription was unsuccessful."}, status=400)
+    
 
 
 class AcademicSessionListAPIView(APIView):
@@ -135,6 +248,9 @@ class AcademicSessionListAPIView(APIView):
 
     def get(self, request):
         user = request.user
+        if not is_admin(user):
+            raise PermissionDenied("You do not have permission to perform this action.")
+        
         school = SchoolProfile.objects.filter(user=user).first()
         if not school:
             return Response([])
@@ -148,6 +264,8 @@ class ToggleAcademicSessionAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
+        if not is_admin(request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         try:
             session = AcademicSession.objects.get(pk=pk)
         except AcademicSession.DoesNotExist:
@@ -168,6 +286,8 @@ class ToggleTermAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
+        if not is_admin(request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         try:
             term = Term.objects.select_related('session').get(pk=pk)
         except Term.DoesNotExist:
@@ -221,6 +341,8 @@ class StudentDetailAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, student_id):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         student = get_object_or_404(Student, id=student_id)
         student.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -297,7 +419,7 @@ class PreviewStudentsUploadView(generics.GenericAPIView):
         }, status=status.HTTP_200_OK)  
 
 class UploadStudentsView(generics.GenericAPIView):
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         students = request.data.get('students', [])
@@ -404,6 +526,8 @@ class ResultListAPIView(APIView):
 class SubjectsListAPIView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
         subjects = Subject.objects.filter(school=school)
@@ -411,6 +535,8 @@ class SubjectsListAPIView(APIView):
         return Response(serializer.data)
     
     def post(self, request):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
         name = request.data.get("name", "").strip()
@@ -432,6 +558,8 @@ class SubjectUpdateDeleteAPIView(APIView):
     permission_classes = [IsAuthenticated]
     
     def put(self, request, subject_id):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         subject = get_object_or_404(Subject, id=subject_id)
         serializer = StudentSerializer(subject, data=request.data, partial=True)
         if serializer.is_valid():
@@ -450,6 +578,8 @@ class SubjectUpdateDeleteAPIView(APIView):
 class GradingListAPIView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
         grade = GradingSystem.objects.filter(school=school)
@@ -457,6 +587,8 @@ class GradingListAPIView(APIView):
         return Response(serializer.data)
     
     def post(self, request):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
 
@@ -485,6 +617,8 @@ class GradingUpdateDeleteAPIView(APIView):
     permission_classes = [IsAuthenticated]
     
     def put(self, request, grade_id):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         grade = get_object_or_404(GradingSystem, id=grade_id)
         serializer = GradeSystemSerializer(grade, data=request.data, partial=True)
         if serializer.is_valid():
@@ -493,6 +627,8 @@ class GradingUpdateDeleteAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, grade_id):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         grade = get_object_or_404(GradingSystem, id=grade_id)
         grade.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -535,12 +671,16 @@ class SchoolProfileAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
         serializer = SchoolProfileSerializer(school)
         return Response(serializer.data)
 
     def put(self, request):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
         serializer = SchoolProfileSerializer(school, data=request.data)
@@ -573,9 +713,12 @@ class SchoolUsersListView(APIView):
     
 class CreateUserView(generics.CreateAPIView):
     serializer_class = CreateUserSerializer
+    permission_classes = [IsAuthenticated]
     queryset = User.objects.all()
 
     def perform_create(self, serializer):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         email = serializer.validated_data['email']
         user = User.objects.create_user(
             email=email,
@@ -591,7 +734,10 @@ class CreateUserView(generics.CreateAPIView):
         
         
 class DeactivateUserView(APIView):
+    permission_classes = [IsAuthenticated]
     def post(self, request, user_id, *args, **kwargs):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         try:
             user = User.objects.get(id=user_id)
             user.is_active = not user.is_active
@@ -604,8 +750,10 @@ class DeactivateUserView(APIView):
         
 class SubscriptionListView(generics.ListAPIView):
     serializer_class = SubscriptionSerializer
-    
+    permission_classes = [IsAuthenticated]
     def get_queryset(self):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         user = self.request.user
         school = SchoolProfile.objects.filter(user=user).first()
         return Subscription.objects.filter(school=school).order_by('-expires_on')
@@ -613,7 +761,7 @@ class SubscriptionListView(generics.ListAPIView):
 
 from rest_framework.pagination import PageNumberPagination
 class StudentPagination(PageNumberPagination):
-    page_size = 4
+    page_size = 40
     max_page_size = 40 
     
     
@@ -650,6 +798,8 @@ class SchoolProfileUpdateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
+        if not is_admin(self.request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
         if not school:
@@ -661,3 +811,34 @@ class SchoolProfileUpdateView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    
+    
+
+class GetStudentCommentView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request, student_id):
+        try:
+            student = Student.objects.get(id=student_id)
+        except Student.DoesNotExist:
+            return Response({"error": "Invalid student"}, status=404)
+        
+        school = SchoolProfile.objects.filter(user=request.user).first()
+        if not school:
+            return Response({"error": "School profile not found."}, status=404)
+                
+        session = AcademicSession.objects.filter(school = school, is_current=True).first()
+        if not session:
+            return Response({"error": "session not set"}, status=404)
+        
+        term = Term.objects.filter(session=session, is_current=True).first()
+        if not term:
+            return Response({"error": "term not set"}, status=404)
+        
+        resultSummary = TermTotalMark.objects.filter(student=student, term=term, session=session).first()
+        
+        return Response({
+            "principal_comment": resultSummary.principal_comment if resultSummary and resultSummary.principal_comment else "Not Set",
+            "teacher_comment": resultSummary.teacher_comment if resultSummary and resultSummary.teacher_comment else "Not Set",
+
+        }, status=200)
