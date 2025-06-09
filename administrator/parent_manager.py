@@ -10,7 +10,7 @@ class ParentAccessCodeAuthentication(BaseAuthentication):
             return None
 
         try:
-            parent = Parent.objects.get(access_code=access_code)
+            parent = Parent.objects.get(access_code=access_code, is_active =True)
         except Parent.DoesNotExist:
             raise AuthenticationFailed('Invalid parent access code.')
 

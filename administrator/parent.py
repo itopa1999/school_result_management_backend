@@ -2,8 +2,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics
 
-from administrator.models import Parent, SchoolProfile
-from .parent_serializers import ParentCreateSerializer, ParentListSerializer, ParentLoginSerializer, ParentUpdateSerializer
+from administrator.models import AcademicSession, Parent, SchoolProfile
+from administrator.parent_manager import ParentAccessCodeAuthentication
+from .parent_serializers import ParentCreateSerializer, ParentListSerializer, ParentLoginSerializer, ParentUpdateSerializer, StudentNestedSerializer
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 
@@ -61,3 +62,22 @@ class ParentDetailView(generics.RetrieveUpdateAPIView):
             raise PermissionDenied("You do not have permission to perform this action.")
 
         return self.update(request, *args, **kwargs)
+    
+    
+    
+class ParentDashboardView(APIView):
+    authentication_classes = [ParentAccessCodeAuthentication]
+    def get(self, request):
+        parent = request.user
+        print(parent)
+        students = parent.student.all()
+        session = AcademicSession.objects.filter(school__school_name=parent.school.school_name).count()
+        school = SchoolProfile.objects.filter(school_name=parent.school.school_name).first()
+        serializer = StudentNestedSerializer(students, many=True)
+        return Response({
+            "students":serializer.data,
+            "students_count": len(students),
+            "sessions": session,
+            "school_name":school.school_name,
+            "school_location" : school.school_address or "not set"
+            }, status=status.HTTP_200_OK) 

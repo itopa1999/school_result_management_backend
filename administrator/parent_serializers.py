@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Parent, Student
+from .models import Parent, SchoolProfile, Student
 from rest_framework.exceptions import ParseError
 
 
@@ -44,6 +44,8 @@ class ParentLoginSerializer(serializers.Serializer):
 
         try:
             parent = Parent.objects.get(email=email)
+            school = SchoolProfile.objects.filter(school_name=parent.school.school_name).first()
+            
         except Parent.DoesNotExist:
             raise ParseError("Invalid email or password.")
 
@@ -56,16 +58,16 @@ class ParentLoginSerializer(serializers.Serializer):
         return {
             "parent_name": parent.name,
             "access_code": parent.access_code,
-            "student_name": parent.student.name,
+            "school_name":school.school_name,
+            "school_location" : school.school_address
         }
         
         
 
 class StudentNestedSerializer(serializers.ModelSerializer):
-    class_level = serializers.CharField(source='class_level.name', read_only=True)
     class Meta:
         model = Student
-        fields = ['id', 'name', 'class_level']
+        fields = ['id', 'name', 'other_info']
 
 class ParentListSerializer(serializers.ModelSerializer):
     students = StudentNestedSerializer(many=True, source='student')

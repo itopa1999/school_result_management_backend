@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from administrator.models import AcademicSession, ClassLevel, GradingSystem, Result, SchoolProfile, Student, Subject, Subscription, Term, TermTotalMark
+from administrator.models import AcademicSession, ClassLevel, GradingSystem, Result, SchoolProfile, Student, StudentEnrollment, Subject, Subscription, Term, TermTotalMark
 from authentication.models import User
 
 
@@ -38,12 +38,20 @@ class ClassLevelSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'school_name']
 
 class StudentSerializer(serializers.ModelSerializer):
-    class_name = serializers.CharField(source='class_level.name', read_only=True)
     class Meta:
         model = Student
-        fields = ['id', 'name', 'other_info','class_name']
+        fields = ['id', 'name', 'other_info']
         
-        
+
+class StudentEnrollmentSerializer(serializers.ModelSerializer):
+    class_level = serializers.CharField(source='class_level.name', read_only=True)
+    student = StudentSerializer()
+    class Meta:
+        model = StudentEnrollment
+        fields = ['id', 'student','class_level']
+
+
+
 class ResultSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.name', read_only=True)
     term_name = serializers.CharField(source='term.name', read_only=True)

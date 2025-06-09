@@ -41,11 +41,13 @@ class ClassLevel(models.Model):
         super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"{self.school.school_name} - {self.name}"
+        if self.school:
+            return f"{self.school.school_name} - {self.name}"
+        return self.name
     
     
 class Student(models.Model):
-    class_level = models.ForeignKey(ClassLevel, on_delete=models.SET_NULL, null=True, related_name='students')
+    school = models.ForeignKey(SchoolProfile, on_delete=models.SET_NULL, null=True, related_name="students")
     name = models.CharField(max_length=100)
     other_info = models.CharField(max_length=100,blank=True, null=True)
     
@@ -60,7 +62,13 @@ class Student(models.Model):
         ]
         
     def __str__(self):
+        if self.school:
+            return f"{self.school.school_name} - {self.name}"
         return self.name
+    
+    
+
+
     
     
 class AcademicSession(models.Model):
@@ -81,6 +89,8 @@ class AcademicSession(models.Model):
 
     
     def __str__(self):
+        if self.school:
+            return f"{self.school.school_name} - {self.name}"
         return self.name
 
 class Term(models.Model):
@@ -100,7 +110,9 @@ class Term(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.name} - {self.session.name}"
+        if self.session:
+            return f"{self.session.name} - {self.name}"
+        return self.name
     
     
 from django.db.models import Sum
@@ -190,7 +202,9 @@ class Result(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.student.name} - {self.term.name} ({self.term.session.name})"
+        if self.student:
+            return f"{self.student.name} - {self.subjects} result"
+        return self.subjects
     
     
 class TermTotalMark(models.Model):
@@ -211,9 +225,28 @@ class TermTotalMark(models.Model):
         ordering = ['term']
 
     def __str__(self):
-        return f"{self.student.name} - {self.session.name} - {self.term.name}"
+        if self.student:
+            return f"{self.student.name} - term result"
+        return self.id
+    
+
+
+class StudentEnrollment(models.Model):
+    student = models.ForeignKey(Student, on_delete=models.SET_NULL, null=True)
+    class_level = models.ForeignKey(ClassLevel, on_delete=models.SET_NULL, null=True, related_name='students')
+    school = models.ForeignKey(SchoolProfile, on_delete=models.SET_NULL, null=True, related_name='student_school')
+    session = models.ForeignKey(AcademicSession, on_delete=models.CASCADE)
     
     
+    class Meta:
+        ordering = ['-id']
+
+    def __str__(self):
+        if self.student:
+            return f"{self.student.name} - enrollment for {self.session.name}"
+        return self.id
+
+
     
 
 # settings
@@ -235,7 +268,9 @@ class Subject(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.school.school_name} - {self.name}"
+        if self.school:
+            return f"{self.school.school_name} - {self.name}"
+        return self.name
     
     
     
@@ -255,7 +290,9 @@ class GradingSystem(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.grade} ({self.min_score}-{self.max_score})"
+        if self.school:
+            return f"{self.school.school_name} - grading system {self.grade}"
+        return self.grade
     
 
 from django.utils import timezone
@@ -299,7 +336,9 @@ class Subscription(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.session} - {self.status.capitalize()}"
+        if self.school:
+            return f"{self.school.school_name} {self.session} - {self.status.capitalize()}"
+        return self.session
     
 
 
@@ -345,4 +384,6 @@ class Parent(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.name} (Student: {self.student.name})"
+        if self.school:
+            return f"{self.school.school_name} parent: {self.name}"
+        return self.name

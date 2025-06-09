@@ -13,9 +13,9 @@ from rest_framework.response import Response
 from rest_framework import status, generics
 from django.db import transaction
 from rest_framework.parsers import MultiPartParser, FormParser
-from administrator.serializers import AcademicSessionSerializer, ClassLevelSerializer, CreateUserSerializer, DashboardSerializer, GradeSystemSerializer, MainInfoSerializer, ResultSerializer, SchoolProfileSerializer, StudentSerializer, SubjectsSerializer, SubscriptionSerializer, TermTotalMarkSerializer, UserSerializer
+from administrator.serializers import AcademicSessionSerializer, ClassLevelSerializer, CreateUserSerializer, DashboardSerializer, GradeSystemSerializer, MainInfoSerializer, ResultSerializer, SchoolProfileSerializer, StudentEnrollmentSerializer, StudentSerializer, SubjectsSerializer, SubscriptionSerializer, TermTotalMarkSerializer, UserSerializer
 from authentication.models import User
-from .models import AcademicSession, ClassLevel, GradingSystem, Result, Student, Subject, Subscription, Term, SchoolProfile, TermTotalMark
+from .models import AcademicSession, ClassLevel, GradingSystem, Result, Student, StudentEnrollment, Subject, Subscription, Term, SchoolProfile, TermTotalMark
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 
@@ -69,7 +69,7 @@ class DashboardAPIView(APIView):
         current_session = AcademicSession.objects.filter(school=school, is_current=True).first()
         current_term = Term.objects.filter(session=current_session, is_current=True).first()
         active_classes = ClassLevel.objects.filter(school=school).count()
-        students = Student.objects.filter(class_level__school__user = user).count()
+        students = Student.objects.filter(school = school).count()
         subjects = Subject.objects.filter(school__user = user).count()
         # Example fallback values
         session_name = current_session.name if current_session else "Not Set"
@@ -321,8 +321,10 @@ class ClassLevelStudentsAPIView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request, class_level_id):
         class_level = get_object_or_404(ClassLevel, id=class_level_id)
-        students = Student.objects.filter(class_level=class_level)
-        serializer = StudentSerializer(students, many=True)
+        school = SchoolProfile.objects.filter(user=request.user).first()
+        session = AcademicSession.objects.filter(school = school, is_current=True).first()
+        students = StudentEnrollment.objects.filter(class_level=class_level, session = session, school = school)
+        serializer = StudentEnrollmentSerializer(students, many=True)
         return Response(serializer.data)
 
 class StudentDetailAPIView(APIView):
@@ -430,15 +432,22 @@ class UploadStudentsView(generics.GenericAPIView):
 
         if not class_level_id:
             return Response({'error': 'Class Level ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
 
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
+        
+        session = AcademicSession.objects.filter(school = school, is_current=True).first()
+        if not session:
+            return Response({"error": "session not set"}, status=404)
+        
         class_level = ClassLevel.objects.filter(school=school, id=class_level_id).first()
 
         if not class_level:
             return Response({'error': 'Invalid class level selected.'}, status=status.HTTP_400_BAD_REQUEST)
 
         students_to_create = []
+        new_enrollments = []
         updated_rows = 0
         skipped_rows = 0
 
@@ -450,7 +459,7 @@ class UploadStudentsView(generics.GenericAPIView):
                 skipped_rows += 1
                 continue
 
-            existing = Student.objects.filter(name__iexact=name.capitalize(), class_level=class_level).first()
+            existing = Student.objects.filter(name__iexact=name.capitalize(), school=school).first()
             if existing:
                 existing.other_info = other_info
                 existing.save()
@@ -458,16 +467,28 @@ class UploadStudentsView(generics.GenericAPIView):
                 continue
 
             students_to_create.append(Student(
+                school=school,
                 name=name,
                 other_info=other_info,
-                class_level=class_level
+            ))
+            
+
+
+        created_students = Student.objects.bulk_create(students_to_create)
+        
+        for student in created_students:
+            new_enrollments.append(StudentEnrollment(
+                student=student,
+                class_level=class_level,
+                session=session,
+                school=school
             ))
 
-        Student.objects.bulk_create(students_to_create)
+        StudentEnrollment.objects.bulk_create(new_enrollments)
 
         return Response({
             'message': 'Student upload successful.',
-            'saved': len(students_to_create),
+            'saved': len(created_students),
             'updated': updated_rows,
             'skipped': skipped_rows
         }, status=status.HTTP_201_CREATED)
@@ -771,11 +792,12 @@ class StudentsListAPIView(APIView):
     def get(self, request):
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
-        students = Student.objects.filter(class_level__school=school)
-
+        
+        session = AcademicSession.objects.filter(school = school, is_current=True).first()
+        students = StudentEnrollment.objects.filter(session = session, school = school)        
         paginator = StudentPagination()
         paginated_students = paginator.paginate_queryset(students, request)
-        serializer = StudentSerializer(paginated_students, many=True)
+        serializer = StudentEnrollmentSerializer(paginated_students, many=True)
 
         return paginator.get_paginated_response(serializer.data)
     

@@ -5,7 +5,7 @@ from django.http import HttpResponse
 import openpyxl
 
 from administrator.serializers import ResultSerializer
-from .models import AcademicSession, Result, Student, Subject, SchoolProfile, Term, TermTotalMark
+from .models import AcademicSession, Result, Student, StudentEnrollment, Subject, SchoolProfile, Term, TermTotalMark
 from rest_framework.parsers import MultiPartParser, FormParser
 
 class SubjectExcelExportView(APIView):
@@ -287,7 +287,9 @@ class ShowStudentResultView(APIView):
         results_serializer = ResultSerializer(results, many=True)
         
         # Comments
-        resultSummary = TermTotalMark.objects.filter(student=student, term=term, session=session).first()        
+        resultSummary = TermTotalMark.objects.filter(student=student, term=term, session=session).first()
+        
+        class_name = StudentEnrollment.objects.filter(student=student, school=school, session=session).first()    
         
         # Total score for the student
         total_score = results.aggregate(total=Coalesce(Sum('total_score'), 0))['total']
@@ -295,14 +297,25 @@ class ShowStudentResultView(APIView):
         total_possible = subjects_count * 100
         average_score = round((total_score / total_possible) * 100, 2) if total_possible else 0
         
-        
+        class_results = None
+        student_ids_in_class = None
         # Class-level stats
-        class_students = Student.objects.filter(class_level=student.class_level)
-        class_results = Result.objects.filter(
-            student__in=class_students,
-            session=session,
-            term=term
-        )
+        class_enrollment = StudentEnrollment.objects.filter(student=student, school=school, session=session).first()
+        if class_enrollment:
+            student_ids_in_class = StudentEnrollment.objects.filter(
+                class_level=class_enrollment.class_level,
+                session=session,
+                school=school
+            ).values_list('student', flat=True)
+
+            # Get all results for those students in the given session and term
+            class_results = Result.objects.filter(
+                student_id__in=student_ids_in_class,
+                session=session,
+                term=term
+            )
+        else:
+            class_results = Result.objects.none()
         
         
         # Compute each student's total
@@ -323,7 +336,7 @@ class ShowStudentResultView(APIView):
         # Class average
         class_total = class_results.aggregate(class_total=Coalesce(Sum('total_score'), 0))['class_total']
         total_subjects = class_results.count()
-        student_total_count = class_students.count()
+        student_total_count = student_ids_in_class.count()
         class_avg = round((class_total / (student_total_count * 100 * subjects_count)) * 100, 2) if student_total_count and subjects_count else 0
 
         
@@ -342,7 +355,7 @@ class ShowStudentResultView(APIView):
             "student" : {
                 "student_name" : student.name,
                 "other_info" : student.other_info,
-                "class" : student.class_level.name
+                "class" : class_name.class_level.name or "not set"
             },
             "results" : results_serializer.data,
             "performance_summary": {

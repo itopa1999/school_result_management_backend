@@ -54,6 +54,7 @@ urlpatterns = [
     path('parent/login/', ParentLoginView.as_view(), name='parent-login'),
     path('parents/', ParentCreateListsView.as_view(), name='parent-create'),
     path('parents/<int:pk>/', ParentDetailView.as_view()),
+    path('parent/dashboard/', ParentDashboardView.as_view()),
     
 
 ]

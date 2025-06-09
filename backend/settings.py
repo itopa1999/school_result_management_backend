@@ -2,6 +2,8 @@ from dotenv import load_dotenv
 import os
 from datetime import timedelta
 from django.utils import timezone
+from corsheaders.defaults import default_headers
+
 
 from pathlib import Path
 
@@ -299,3 +301,7 @@ DRF_STANDARDIZED_ERRORS = {
 PAYSTACK_SECRET_KEY=os.getenv('PAYSTACK_SECRET_KEY')
 
 SUBSCRIPTION_PRICE = 20000
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'X-parent-code',
+]
