@@ -56,5 +56,9 @@ urlpatterns = [
     path('parents/<int:pk>/', ParentDetailView.as_view()),
     path('parent/dashboard/', ParentDashboardView.as_view()),
     
+    path("parent/forget/password/", ParentForgetPasswordView.as_view()),
+    path("parent/change/password/", ParentChangePasswordView.as_view()),
+    path('verify/email/<uidb64>/<token>/', ParentPasswordResetVerifyView.as_view(), name='parent-verify-email'),
+    
 
 ]
