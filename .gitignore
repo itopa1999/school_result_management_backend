@@ -70,3 +70,4 @@ htmlcov/
 *.sqlite
 .dump.rdb
 dump.rdb
+!Media/
