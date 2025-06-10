@@ -168,7 +168,7 @@ class ParentChangePasswordView(generics.GenericAPIView):
             if not parent.check_password(password):
                 return Response({"error": "Old Password is incorrect"}, status=status.HTTP_400_BAD_REQUEST)
 
-            parent.password = make_password(password1)
+            parent.set_password(password1)
             parent.save()
                 
             
