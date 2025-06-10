@@ -446,11 +446,9 @@ class UploadStudentsView(generics.GenericAPIView):
         if not class_level:
             return Response({'error': 'Invalid class level selected.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        students_to_create = []
-        new_enrollments = []
         updated_rows = 0
         skipped_rows = 0
-
+        created_students = 0
         for student in students:
             name = student.get('name', '').strip()
             other_info = student.get('other_info', '').strip()
@@ -458,37 +456,45 @@ class UploadStudentsView(generics.GenericAPIView):
             if not name or not other_info:
                 skipped_rows += 1
                 continue
+            
 
-            existing = Student.objects.filter(name__iexact=name.capitalize(), school=school).first()
-            if existing:
-                existing.other_info = other_info
-                existing.save()
+            existingStudent = Student.objects.filter(name__iexact=name.capitalize(), school=school).first()
+            if existingStudent:
+                existingStudent.other_info = other_info
+                existingStudent.save()
                 updated_rows += 1
-                continue
-
-            students_to_create.append(Student(
-                school=school,
-                name=name,
-                other_info=other_info,
-            ))
+                
+                existingStudentEnroll = StudentEnrollment.objects.filter(student = existingStudent, school=school, session = session).first()
+                if not existingStudentEnroll:
+                    StudentEnrollment.objects.create(
+                        student=existingStudent,
+                        class_level=class_level,
+                        session=session,
+                        school=school
+                    )
+            else:
+                new_student = Student.objects.create(
+                    school=school,
+                    name=name,
+                    other_info=other_info
+                )
+                created_students += 1
+                
+                existingStudentEnroll = StudentEnrollment.objects.filter(student = new_student, school=school, session = session).first()
+                if not existingStudentEnroll:
+                    StudentEnrollment.objects.create(
+                        student=new_student,
+                        class_level=class_level,
+                        session=session,
+                        school=school
+                    )
+                
             
 
 
-        created_students = Student.objects.bulk_create(students_to_create)
-        
-        for student in created_students:
-            new_enrollments.append(StudentEnrollment(
-                student=student,
-                class_level=class_level,
-                session=session,
-                school=school
-            ))
-
-        StudentEnrollment.objects.bulk_create(new_enrollments)
-
         return Response({
             'message': 'Student upload successful.',
-            'saved': len(created_students),
+            'saved': created_students,
             'updated': updated_rows,
             'skipped': skipped_rows
         }, status=status.HTTP_201_CREATED)

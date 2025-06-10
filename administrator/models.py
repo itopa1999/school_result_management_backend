@@ -227,9 +227,8 @@ class TermTotalMark(models.Model):
     def __str__(self):
         if self.student:
             return f"{self.student.name} - term result"
-        return self.id
+        return self.teacher_comment
     
-
 
 class StudentEnrollment(models.Model):
     student = models.ForeignKey(Student, on_delete=models.SET_NULL, null=True)
@@ -244,7 +243,7 @@ class StudentEnrollment(models.Model):
     def __str__(self):
         if self.student:
             return f"{self.student.name} - enrollment for {self.session.name}"
-        return self.id
+        return self.class_level.name
 
 
     
