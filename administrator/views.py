@@ -11,9 +11,10 @@ from django.urls import reverse
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics
+from drf_yasg.utils import swagger_auto_schema
 from django.db import transaction
 from rest_framework.parsers import MultiPartParser, FormParser
-from administrator.serializers import AcademicSessionSerializer, ClassLevelSerializer, CreateUserSerializer, DashboardSerializer, GradeSystemSerializer, MainInfoSerializer, ResultSerializer, SchoolProfileSerializer, StudentEnrollmentSerializer, StudentSerializer, SubjectsSerializer, SubscriptionSerializer, TermTotalMarkSerializer, UserSerializer
+from administrator.serializers import AcademicSessionSerializer, ClassLevelSerializer, CreateUserSerializer, DashboardSerializer, GradeSystemSerializer, MainInfoSerializer, ResultSerializer, SchoolProfileSerializer, StudentEnrollmentSerializer, StudentSerializer, StudentUploadPreviewSerializer, SubjectsSerializer, SubscriptionSerializer, TermTotalMarkSerializer, UserSerializer
 from authentication.models import User
 from .models import AcademicSession, ClassLevel, GradingSystem, Result, Student, StudentEnrollment, Subject, Subscription, Term, SchoolProfile, TermTotalMark
 from rest_framework.permissions import IsAuthenticated
@@ -57,7 +58,7 @@ def is_manager(user):
 
 class DashboardAPIView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request):
         # Get the school for the current user
         user = request.user
@@ -100,6 +101,7 @@ class DashboardAPIView(APIView):
 
 class StartSessionView(APIView):
     permission_classes = [IsAuthenticated]
+    @swagger_auto_schema(tags=["Admins"])
     def post(self, request):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -187,7 +189,7 @@ class StartSessionView(APIView):
 
 
 class PaystackConfirmSubscriptionView(APIView):
-
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request, reference, *args, **kwargs):
         if not reference:
             return Response({"error": "Reference is required"}, status=400)
@@ -245,7 +247,7 @@ class PaystackConfirmSubscriptionView(APIView):
 
 class AcademicSessionListAPIView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request):
         user = request.user
         if not is_admin(user):
@@ -262,7 +264,7 @@ class AcademicSessionListAPIView(APIView):
     
 class ToggleAcademicSessionAPIView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Admins"])
     def post(self, request, pk):
         if not is_admin(request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -284,7 +286,7 @@ class ToggleAcademicSessionAPIView(APIView):
 
 class ToggleTermAPIView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Admins"])
     def post(self, request, pk):
         if not is_admin(request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -307,9 +309,32 @@ class ToggleTermAPIView(APIView):
         return Response({'message': 'Term activated successfully.'}, status=status.HTTP_200_OK)
     
     
-    
+
+class SessionUpdateView(generics.GenericAPIView):
+    queryset = AcademicSession.objects.all()
+    serializer_class = AcademicSessionSerializer
+    permission_classes = [IsAuthenticated]
+    @swagger_auto_schema(tags=["Admins"])        
+    def put(self, request, pk):
+        if not is_admin(request.user):
+            raise PermissionDenied("You do not have permission to perform this action.")
+        try:
+            session = self.get_queryset().get(pk=pk)
+        except AcademicSession.DoesNotExist:
+            return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = self.get_serializer(session, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "Session updated successfully."}, status=status.HTTP_200_OK)
+        print(serializer.errors)
+        return Response({"error":serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
 class ClassLevelListAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request):
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
@@ -319,6 +344,7 @@ class ClassLevelListAPIView(APIView):
 
 class ClassLevelStudentsAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request, class_level_id):
         class_level = get_object_or_404(ClassLevel, id=class_level_id)
         school = SchoolProfile.objects.filter(user=request.user).first()
@@ -329,11 +355,13 @@ class ClassLevelStudentsAPIView(APIView):
 
 class StudentDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request, student_id):
         student = get_object_or_404(Student, id=student_id)
         serializer = StudentSerializer(student)
         return Response(serializer.data)
 
+    @swagger_auto_schema(tags=["Admins"])
     def put(self, request, student_id):
         student = get_object_or_404(Student, id=student_id)
         serializer = StudentSerializer(student, data=request.data, partial=True)
@@ -342,6 +370,7 @@ class StudentDetailAPIView(APIView):
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @swagger_auto_schema(tags=["Admins"])
     def delete(self, request, student_id):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -350,208 +379,11 @@ class StudentDetailAPIView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-import os
-from rest_framework.exceptions import ParseError
-import pandas as pd
-
-class DownloadTemplateView(APIView):
-    permission_classes = [IsAuthenticated]
-    def get(self, request, *args, **kwargs):
-        template_filename = "upload_students_template.xlsx"
-        file_path = os.path.join(settings.MEDIA_ROOT, "Documents", template_filename)
-
-        if not os.path.exists(file_path):
-            raise ParseError("Template file not found.")
-
-        # Return the file as a download response
-        response = FileResponse(open(file_path, 'rb'), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        response['Content-Disposition'] = f'attachment; filename="{template_filename}"'
-        return response
-    
-
-class PreviewStudentsUploadView(generics.GenericAPIView):
-    permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
-
-    def post(self, request):
-        file = request.FILES.get('file')
-        class_level_id = request.data.get('classLevel')
-
-        if not file:
-            return Response({'error': 'No file uploaded.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not class_level_id:
-            return Response({'error': 'Class Level not selected.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            df = pd.read_excel(file)
-        except Exception as e:
-            return Response({'error': f'Invalid Excel file: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
-
-        required_columns = ['Name', 'Other info']
-        if not all(col in df.columns for col in required_columns):
-            return Response({
-                'error': f'Missing required columns. Required: {required_columns}'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        user = request.user
-        school = SchoolProfile.objects.filter(user=user).first()
-        class_level = ClassLevel.objects.filter(school=school, id=class_level_id).first()
-
-        if not class_level:
-            return Response({'error': 'Invalid class level selected.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        cleaned_data = []
-
-        for _, row in df.iterrows():
-            name = str(row['Name']).strip() if not pd.isna(row['Name']) else ''
-            other_info = str(row['Other info']).strip() if not pd.isna(row['Other info']) else ''
-
-            if name and other_info:
-                cleaned_data.append({
-                    'name': name,
-                    'other_info': other_info,
-                })
-
-        return Response({
-            'class_level': class_level.name,
-            'class_level_id': class_level.id,
-            'students': cleaned_data,
-            'total_valid': len(cleaned_data)
-        }, status=status.HTTP_200_OK)  
-
-class UploadStudentsView(generics.GenericAPIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        students = request.data.get('students', [])
-        class_level_id = request.data.get('class_level_id')
-
-        if not students:
-            return Response({'error': 'No students provided.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not class_level_id:
-            return Response({'error': 'Class Level ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        
-
-        user = request.user
-        school = SchoolProfile.objects.filter(user=user).first()
-        
-        session = AcademicSession.objects.filter(school = school, is_current=True).first()
-        if not session:
-            return Response({"error": "session not set"}, status=404)
-        
-        class_level = ClassLevel.objects.filter(school=school, id=class_level_id).first()
-
-        if not class_level:
-            return Response({'error': 'Invalid class level selected.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        updated_rows = 0
-        skipped_rows = 0
-        created_students = 0
-        for student in students:
-            name = student.get('name', '').strip()
-            other_info = student.get('other_info', '').strip()
-
-            if not name or not other_info:
-                skipped_rows += 1
-                continue
-            
-
-            existingStudent = Student.objects.filter(name__iexact=name.capitalize(), school=school).first()
-            if existingStudent:
-                existingStudent.other_info = other_info
-                existingStudent.save()
-                updated_rows += 1
-                
-                existingStudentEnroll = StudentEnrollment.objects.filter(student = existingStudent, school=school, session = session).first()
-                if not existingStudentEnroll:
-                    StudentEnrollment.objects.create(
-                        student=existingStudent,
-                        class_level=class_level,
-                        session=session,
-                        school=school
-                    )
-            else:
-                new_student = Student.objects.create(
-                    school=school,
-                    name=name,
-                    other_info=other_info
-                )
-                created_students += 1
-                
-                existingStudentEnroll = StudentEnrollment.objects.filter(student = new_student, school=school, session = session).first()
-                if not existingStudentEnroll:
-                    StudentEnrollment.objects.create(
-                        student=new_student,
-                        class_level=class_level,
-                        session=session,
-                        school=school
-                    )
-                
-            
-
-
-        return Response({
-            'message': 'Student upload successful.',
-            'saved': created_students,
-            'updated': updated_rows,
-            'skipped': skipped_rows
-        }, status=status.HTTP_201_CREATED)
-
-
-
-class ResultListAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-    def get(self, request, student_id):
-        user = request.user
-        
-        try:
-            student = Student.objects.get(id=student_id)
-        except Student.DoesNotExist:
-            return Response({"error": "Invalid student"}, status=404)
-        
-        school = SchoolProfile.objects.filter(user=user).first()
-        if not school:
-            return Response({"error": "School profile not found."}, status=404)
-
-        session = AcademicSession.objects.filter(school=school, is_current=True).first()
-        if not session:
-            return Response({"error": "Session not set"}, status=404)
-
-        term = Term.objects.filter(session=session, is_current=True).first()
-        if not term:
-            return Response({"error": "Term not set"}, status=404)
-        
-        # Filter results for a particular student, term, and session
-        results = Result.objects.filter(
-            student=student,
-            term=term,
-            session=session
-        )
-        results_serializer = ResultSerializer(results, many=True)
-
-        # Get the corresponding TermTotalMark if it exists
-        try:
-            term_total = TermTotalMark.objects.get(
-                student_id=student,
-                term_id=term,
-                session_id=session
-            )
-            term_total_serializer = TermTotalMarkSerializer(term_total)
-        except TermTotalMark.DoesNotExist:
-            term_total_serializer = None
-
-        # Combine both in one response
-        return Response({
-            "results": results_serializer.data,
-            "term_total": term_total_serializer.data if term_total_serializer else None
-        })
-
 
 
 class SubjectsListAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -561,6 +393,7 @@ class SubjectsListAPIView(APIView):
         serializer = SubjectsSerializer(subjects, many=True)
         return Response(serializer.data)
     
+    @swagger_auto_schema(tags=["Admins"])
     def post(self, request):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -583,7 +416,7 @@ class SubjectsListAPIView(APIView):
     
 class SubjectUpdateDeleteAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    
+    @swagger_auto_schema(tags=["Admins"])
     def put(self, request, subject_id):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -593,7 +426,8 @@ class SubjectUpdateDeleteAPIView(APIView):
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+    
+    @swagger_auto_schema(tags=["Admins"])
     def delete(self, request, subject_id):
         subject = get_object_or_404(Subject, id=subject_id)
         subject.delete()
@@ -604,6 +438,7 @@ class SubjectUpdateDeleteAPIView(APIView):
     
 class GradingListAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -613,6 +448,7 @@ class GradingListAPIView(APIView):
         serializer = GradeSystemSerializer(grade, many=True)
         return Response(serializer.data)
     
+    @swagger_auto_schema(tags=["Admins"])
     def post(self, request):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -642,7 +478,7 @@ class GradingListAPIView(APIView):
     
 class GradingUpdateDeleteAPIView(APIView):
     permission_classes = [IsAuthenticated]
-    
+    @swagger_auto_schema(tags=["Admins"])
     def put(self, request, grade_id):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -652,7 +488,8 @@ class GradingUpdateDeleteAPIView(APIView):
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+    
+    @swagger_auto_schema(tags=["Admins"])
     def delete(self, request, grade_id):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -663,7 +500,7 @@ class GradingUpdateDeleteAPIView(APIView):
 import csv
 class DownloadAllStudentsAPIView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request, *args, **kwargs):
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
@@ -685,8 +522,8 @@ class DownloadAllStudentsAPIView(APIView):
         for class_level in class_levels:
             for student in class_level.students.all():
                 writer.writerow([
-                    student.name,
-                    student.other_info or '',
+                    student.student.name,
+                    student.student.other_info or '',
                     class_level.name
                 ])
 
@@ -696,7 +533,7 @@ class DownloadAllStudentsAPIView(APIView):
     
 class SchoolProfileAPIView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -704,7 +541,8 @@ class SchoolProfileAPIView(APIView):
         school = SchoolProfile.objects.filter(user=user).first()
         serializer = SchoolProfileSerializer(school)
         return Response(serializer.data)
-
+    
+    @swagger_auto_schema(tags=["Admins"])
     def put(self, request):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -720,7 +558,8 @@ class SchoolProfileAPIView(APIView):
 
 class SchoolUsersListView(APIView):
     permission_classes = [IsAuthenticated]
-
+    
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request):
         user = request.user
 
@@ -742,7 +581,11 @@ class CreateUserView(generics.CreateAPIView):
     serializer_class = CreateUserSerializer
     permission_classes = [IsAuthenticated]
     queryset = User.objects.all()
-
+    
+    @swagger_auto_schema(tags=["Admins"])
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
+    
     def perform_create(self, serializer):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -762,6 +605,7 @@ class CreateUserView(generics.CreateAPIView):
         
 class DeactivateUserView(APIView):
     permission_classes = [IsAuthenticated]
+    @swagger_auto_schema(tags=["Admins"])
     def post(self, request, user_id, *args, **kwargs):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -778,6 +622,10 @@ class DeactivateUserView(APIView):
 class SubscriptionListView(generics.ListAPIView):
     serializer_class = SubscriptionSerializer
     permission_classes = [IsAuthenticated]
+    @swagger_auto_schema(tags=["Admins"])
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+    
     def get_queryset(self):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -794,7 +642,7 @@ class StudentPagination(PageNumberPagination):
     
 class StudentsListAPIView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request):
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
@@ -811,7 +659,7 @@ class StudentsListAPIView(APIView):
     
 class SchoolDetailsView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request):
         user = request.user
         school = SchoolProfile.objects.filter(user=user).first()
@@ -824,7 +672,7 @@ class SchoolDetailsView(APIView):
     
 class SchoolProfileUpdateView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Admins"])
     def put(self, request):
         if not is_admin(self.request.user):
             raise PermissionDenied("You do not have permission to perform this action.")
@@ -845,6 +693,7 @@ class SchoolProfileUpdateView(APIView):
 
 class GetStudentCommentView(APIView):
     permission_classes = [IsAuthenticated]
+    @swagger_auto_schema(tags=["Admins"])
     def get(self, request, student_id):
         try:
             student = Student.objects.get(id=student_id)

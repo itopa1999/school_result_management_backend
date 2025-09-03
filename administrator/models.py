@@ -75,6 +75,8 @@ class AcademicSession(models.Model):
     school = models.ForeignKey(SchoolProfile, on_delete=models.SET_NULL, null=True, related_name="sessions")
     name = models.CharField(max_length=20)
     is_current = models.BooleanField(default=False)
+    show = models.BooleanField(default=False)
+    next_term_date = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
@@ -386,3 +388,81 @@ class Parent(models.Model):
         if self.school:
             return f"{self.school.school_name} parent: {self.name}"
         return self.name
+
+
+
+class Levy(models.Model):
+    school = models.ForeignKey(SchoolProfile, on_delete=models.SET_NULL, null=True, related_name='levy_class_levy')
+    term = models.ForeignKey(Term, on_delete=models.SET_NULL, null=True, related_name='levy_fees_term')
+    session = models.ForeignKey(AcademicSession, on_delete=models.CASCADE, null=True)
+    name = models.CharField(max_length=50)
+    amount = models.DecimalField(decimal_places=2, default=0.00, max_digits=50)
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    
+    def save(self, *args, **kwargs):
+        # Calculate CA and total score
+        self.name = self.name.strip().capitalize()
+        super().save(*args, **kwargs)
+
+    class Meta:
+        ordering = ['-id']
+        indexes = [
+            models.Index(fields=['-name']),
+        ]
+    
+    def __str__(self):
+        if self.school:
+            return f"{self.school.school_name} - {self.name}"
+        return self.name
+    
+
+    
+class StudentFee(models.Model):
+    student = models.ForeignKey(Student, on_delete=models.SET_NULL, null=True, related_name='student_fees')
+    term = models.ForeignKey(Term, on_delete=models.SET_NULL, null=True, related_name='fees_term')
+    session = models.ForeignKey(AcademicSession, on_delete=models.CASCADE)
+    levy = models.CharField(max_length=50)
+    amount = models.DecimalField(decimal_places=2, default=0.00, max_digits=50)
+    
+    def save(self, *args, **kwargs):
+        self.levy = self.levy.strip().capitalize()
+        super().save(*args, **kwargs)
+    
+    
+    class Meta:
+        ordering = ['-id']
+        indexes = [
+            models.Index(fields=['-levy', '-session']),
+        ]
+    
+    def __str__(self):
+        if self.student:
+            return f"{self.student.name} - {self.levy} fees"
+        return self.levy
+
+
+
+ 
+class StudentTermTotalFee(models.Model):
+    student = models.ForeignKey(Student, on_delete=models.SET_NULL, null=True, related_name='term_totals_fee')
+    term = models.ForeignKey(Term, on_delete=models.SET_NULL, null=True, related_name='term_totals_fee')
+    session = models.ForeignKey(AcademicSession, on_delete=models.SET_NULL, null=True, related_name='term_totals_fee')
+    levy = models.CharField(max_length=50)
+    total_amount = models.DecimalField(decimal_places=2, default=0.00, max_digits=50)
+    to_balance = models.DecimalField(decimal_places=2, default=0.00, max_digits=50)
+    paid = models.BooleanField(default=True)
+    remarks = models.CharField(max_length=255, blank=True, null=True)
+    
+    def save(self, *args, **kwargs):
+        self.levy = self.levy.strip().capitalize()
+        super().save(*args, **kwargs)
+
+    class Meta:
+        unique_together = ('student', 'term', 'session')
+        ordering = ['term']
+
+    def __str__(self):
+        if self.student:
+            return f"{self.student.name} - term fees"
+        return self.remarks
+    

@@ -1,0 +1,110 @@
+using System.Net;
+using GateForce.Guardian.Entities;
+using GateForce.Guardian.Enums;
+using GateForce.Guardian.Persistence;
+using GateForce.Shared.Infrastructure.BaseClasses;
+using GateForce.Shared.Infrastructure.Helpers;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+
+namespace GateForce.Guardian.Commands.RequiredActions;
+
+public static class AddRequiredActions
+{
+    public class Command : IRequest<BaseResult>
+    {
+        public List<RequiredActionDto> GuarantorRequiredActions { get; set; }
+        public List<RequiredActionDto> BankStatementRequiredActions { get; set; }
+        public List<RequiredActionDto> CollateralRequiredActions { get; set; }
+        public string? CreatedBy { get; set; }
+    }
+
+    public class RequiredActionDto
+    {
+        public string? Name { get; set; }
+        public string? Description { get; set; }
+        public LoanType LoanType { get; set; }
+        public string? Key { get; set; }
+    }
+
+    public class Handler : IRequestHandler<Command, BaseResult>
+    {
+        private readonly GuardianReadWriteDbContext _context;
+
+        public Handler(GuardianReadWriteDbContext context)
+        {
+            _context = context;
+        }
+
+        public async Task<BaseResult> Handle(Command command, CancellationToken cancellationToken)
+        {
+            var requiredActionsToAdd = new List<RequiredAction>();
+            int skipped = 0, added = 0;
+
+            async Task ProcessDtoList(List<RequiredActionDto> dtos)
+            {
+                if (dtos == null || !dtos.Any())
+                    throw new CustomException("No required actions provided.");
+
+                foreach (var dto in dtos)
+                    {
+                        if (string.IsNullOrWhiteSpace(dto.Name) || string.IsNullOrWhiteSpace(dto.Key))
+                        {
+                            skipped++;
+                            continue;
+                        }
+
+                        // Check for duplicates in the database
+                        bool exists = await _context.RequiredActions
+                            .AsNoTracking()
+                            .AnyAsync(x =>
+                                x.Name.ToLower() == dto.Name.Trim().ToLower() &&
+                                x.LoanType == dto.LoanType &&
+                                x.Key.ToLower() == dto.Key.Trim().ToLower() &&
+                                !x.IsDeleted,
+                                cancellationToken);
+
+                        if (exists)
+                        {
+                            skipped++;
+                            continue;
+                        }
+
+                        requiredActionsToAdd.Add(new RequiredAction
+                        {
+                            Name = dto.Name,
+                            Description = dto.Description,
+                            LoanType = dto.LoanType,
+                            Key = dto.Key,
+                            CreatedAt = DateTime.Now,
+                            CreatedBy = command.CreatedBy
+                        });
+
+                        added++;
+                    }
+            }
+
+            await ProcessDtoList(command.GuarantorRequiredActions);
+            await ProcessDtoList(command.BankStatementRequiredActions);
+            await ProcessDtoList(command.CollateralRequiredActions);
+
+            if (requiredActionsToAdd.Any())
+            {
+                await _context.RequiredActions.AddRangeAsync(requiredActionsToAdd, cancellationToken);
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+
+            return new BaseResult
+            {
+                Message = $"Completed. Added: {added}, Skipped: {skipped}.",
+                StatusCode = HttpStatusCode.OK
+            };
+        }
+    }
+}
+
+
+
+
+
+

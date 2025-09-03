@@ -1,8 +1,10 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.db import transaction
-from .models import AcademicSession, StudentEnrollment, ClassLevel
+from .models import AcademicSession, Levy, StudentEnrollment, ClassLevel, StudentTermTotalFee
 
+
+# add to background
 @receiver(post_save, sender=AcademicSession)
 def promote_students_on_new_session(sender, instance, created, **kwargs):
     if not created:
@@ -51,3 +53,26 @@ def promote_students_on_new_session(sender, instance, created, **kwargs):
                     continue
 
     promote()
+
+
+# add to background
+@receiver(post_save, sender=Levy)
+def create_students_levies_on_new_Levies(sender, instance, created, **kwargs):
+    if not created:
+        return
+    
+    school = instance.school
+    if not school:
+        return
+    
+    enrollments = StudentEnrollment.objects.filter(school=school)
+    @transaction.atomic
+    def createLevies():
+        for enrollment in enrollments:
+            StudentTermTotalFee.objects.create(
+                student = enrollment.student,
+                term = term,
+                session = session, 
+                levy = levy,
+                
+            )

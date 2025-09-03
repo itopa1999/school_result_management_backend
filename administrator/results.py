@@ -4,13 +4,13 @@ from rest_framework.response import Response
 from django.http import HttpResponse
 import openpyxl
 
-from administrator.serializers import ResultSerializer
+from administrator.serializers import ResultSerializer, TermTotalMarkSerializer
 from .models import AcademicSession, Result, Student, StudentEnrollment, Subject, SchoolProfile, Term, TermTotalMark
 from rest_framework.parsers import MultiPartParser, FormParser
-
+from drf_yasg.utils import swagger_auto_schema
 class SubjectExcelExportView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Result"])
     def get(self, request, student_id):
         try:
             student = Student.objects.get(id=student_id)
@@ -74,7 +74,7 @@ class SubjectExcelExportView(APIView):
 class UploadStudentResultPreviewView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
-
+    @swagger_auto_schema(tags=["Result"])
     def post(self, request, student_id):
         excel_file = request.FILES.get('file')
         if not all([student_id, excel_file]):
@@ -167,7 +167,7 @@ class UploadStudentResultPreviewView(APIView):
 
 class ConfirmUploadStudentResultView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Result"])
     def post(self, request):
         data = request.data.get('results', [])
         student_id = request.data.get('student_id')
@@ -222,7 +222,7 @@ class ConfirmUploadStudentResultView(APIView):
 
 class ResetStudentResultView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Result"])
     def post(self, request, student_id):
         try:
             student = Student.objects.get(id=student_id)
@@ -258,7 +258,7 @@ def ordinal(n):
 
 class ShowStudentResultView(APIView):
     permission_classes = [IsAuthenticated]
-
+    @swagger_auto_schema(tags=["Result"])
     def post(self, request, student_id):
         try:
             student = Student.objects.get(id=student_id)
@@ -351,6 +351,7 @@ class ShowStudentResultView(APIView):
             "academic_sessions" : {
                 "session": session.name,
                 "term": term.name,
+                "resumptionDate": session.next_term_date
             },
             "student" : {
                 "student_name" : student.name,
@@ -371,4 +372,55 @@ class ShowStudentResultView(APIView):
                 "teacher_comment": resultSummary.teacher_comment if resultSummary and resultSummary.teacher_comment else "Not Set",
 
             }
+        })
+        
+        
+        
+
+class ResultListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    @swagger_auto_schema(tags=["Result"])
+    def get(self, request, student_id):
+        user = request.user
+        
+        try:
+            student = Student.objects.get(id=student_id)
+        except Student.DoesNotExist:
+            return Response({"error": "Invalid student"}, status=404)
+        
+        school = SchoolProfile.objects.filter(user=user).first()
+        if not school:
+            return Response({"error": "School profile not found."}, status=404)
+
+        session = AcademicSession.objects.filter(school=school, is_current=True).first()
+        if not session:
+            return Response({"error": "Session not set"}, status=404)
+
+        term = Term.objects.filter(session=session, is_current=True).first()
+        if not term:
+            return Response({"error": "Term not set"}, status=404)
+        
+        # Filter results for a particular student, term, and session
+        results = Result.objects.filter(
+            student=student,
+            term=term,
+            session=session
+        )
+        results_serializer = ResultSerializer(results, many=True)
+
+        # Get the corresponding TermTotalMark if it exists
+        try:
+            term_total = TermTotalMark.objects.get(
+                student_id=student,
+                term_id=term,
+                session_id=session
+            )
+            term_total_serializer = TermTotalMarkSerializer(term_total)
+        except TermTotalMark.DoesNotExist:
+            term_total_serializer = None
+
+        # Combine both in one response
+        return Response({
+            "results": results_serializer.data,
+            "term_total": term_total_serializer.data if term_total_serializer else None
         })

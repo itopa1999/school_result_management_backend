@@ -2,12 +2,15 @@ from django.urls import path, include
 from .views import *
 from .results import *
 from .parent import *
+from .students import *
+from .levy import *
 
 urlpatterns = [
     
     # path('main/info/', MainInfoAPIView.as_view()),
     path('dashboard/', DashboardAPIView.as_view()),
     path('sessions/', AcademicSessionListAPIView.as_view()),
+    path('sessions/update/<int:pk>/', SessionUpdateView.as_view()),
     path('add/sessions/', StartSessionView.as_view()),
     path('paystack-confirm-subscription/<str:reference>/', PaystackConfirmSubscriptionView.as_view(), name='paystack-confirm-subscription'),
     path('sessions/<int:pk>/toggle/', ToggleAcademicSessionAPIView.as_view()),
@@ -60,5 +63,12 @@ urlpatterns = [
     path("parent/change/password/", ParentChangePasswordView.as_view()),
     path('verify/email/<uidb64>/<token>/', ParentPasswordResetVerifyView.as_view(), name='parent-verify-email'),
     
-
+    path("parent/get/session/lists/", ParentGetSessionView.as_view()),
+    path("parent/get/students/session/lists/<int:session_id>/", ParentGetStudentsSessionView.as_view()),
+    path("parent/get/students/result/<int:student_id>/<int:session_id>/<int:term_id>/", ParentShowStudentResultView.as_view()),
+    
+    # Levy
+    
+    path('levies/', LeviesListAPIView.as_view()),
+    path('levies/<int:levy_id>/', LevyUpdateDeleteAPIView.as_view()),
 ]

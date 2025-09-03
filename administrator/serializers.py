@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from administrator.models import AcademicSession, ClassLevel, GradingSystem, Result, SchoolProfile, Student, StudentEnrollment, Subject, Subscription, Term, TermTotalMark
+from administrator.models import AcademicSession, ClassLevel, GradingSystem, Levy, Result, SchoolProfile, Student, StudentEnrollment, Subject, Subscription, Term, TermTotalMark
 from authentication.models import User
 
 
@@ -28,7 +28,7 @@ class AcademicSessionSerializer(serializers.ModelSerializer):
     terms = TermSerializer(many=True, read_only=True)
     class Meta:
         model = AcademicSession
-        fields = ['id', 'name', 'is_current','terms']
+        fields = ['id', 'name', 'is_current','terms','show','next_term_date']
         
 class ClassLevelSerializer(serializers.ModelSerializer):
     school_name = serializers.CharField(source='school.school_name', read_only=True)
@@ -122,3 +122,21 @@ class CreateUserSerializer(serializers.ModelSerializer):
         fields = ['email']
         
         
+
+
+class StudentUploadPreviewSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    classLevel = serializers.IntegerField()
+    
+    
+class ParentAcademicSessionSerializer(serializers.ModelSerializer):
+    terms = TermSerializer(many=True, read_only=True)
+    class Meta:
+        model = AcademicSession
+        fields = ['id','name','terms']
+        
+        
+class LeviesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Levy
+        fields = ['id', 'name']
